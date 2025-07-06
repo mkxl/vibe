@@ -36,19 +36,6 @@ class Microphone:
     queue: Queue[MicrophoneInput]
     audio_info: AudioInfo
 
-    @classmethod
-    @contextlib.asynccontextmanager
-    async def context(cls, *, device: int = DEFAULT_DEVICE) -> AsyncIterator[Self]:
-        queue = await Queue.new()
-        audio_info = AudioInfo.from_device(device=device)
-        microphone = cls(queue=queue, audio_info=audio_info)
-
-        if audio_info.num_channels == 0:
-            raise ValueError(cls.ZERO_INPUT_CHANNELS_ERROR_MESSAGE)
-
-        with microphone._raw_input_stream():
-            yield microphone
-
     def __aiter__(self) -> AsyncIterator[MicrophoneInput]:
         return self.queue
 
@@ -72,3 +59,16 @@ class Microphone:
             dtype=self.DTYPE,
             callback=self._callback,
         )
+
+    @classmethod
+    @contextlib.asynccontextmanager
+    async def context(cls, *, device: int = DEFAULT_DEVICE) -> AsyncIterator[Self]:
+        queue = await Queue.new()
+        audio_info = AudioInfo.from_device(device=device)
+        microphone = cls(queue=queue, audio_info=audio_info)
+
+        if audio_info.num_channels == 0:
+            raise ValueError(cls.ZERO_INPUT_CHANNELS_ERROR_MESSAGE)
+
+        with microphone._raw_input_stream():
+            yield microphone

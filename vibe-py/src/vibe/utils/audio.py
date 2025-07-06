@@ -1,6 +1,7 @@
 import dataclasses
+from collections.abc import Buffer
 from io import BytesIO
-from typing import BinaryIO, ByteString, ClassVar, Iterable, Optional, Self
+from typing import Annotated, BinaryIO, ClassVar, Iterable, Optional, Self
 
 import sounddevice
 import soundfile
@@ -10,6 +11,7 @@ from pydub import AudioSegment
 from torch import Tensor
 
 from vibe.utils.typing import JsonObject
+from vibe.utils.utils import Shape
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -53,18 +55,24 @@ class AudioInfo:
 @dataclasses.dataclass(kw_only=True)
 class Audio:
     ALWAYS_2D: ClassVar[bool] = True
-    NAME_FRAMES: ClassVar[str] = "frames"
-    NAME_CHANNELS: ClassVar[str] = "channels"
-    NAMES: ClassVar[tuple[str, ...]] = (NAME_FRAMES, NAME_CHANNELS)
+    DIM_CHANNELS: ClassVar[int] = 1
+    DIM_FRAMES: ClassVar[int] = 0
     SAMPLE_WIDTH_PCM_16: ClassVar[int] = 2
 
-    data: Tensor
+    data: Annotated[Tensor, Shape("F,C")]
     sample_rate: int
 
     # NOTE: implemented to avoid having to do [type(self)(data=data, sample_rate=sample_rate)]
     @classmethod
-    def from_values(cls, *, data: Tensor, sample_rate: int) -> Self:
+    def from_values(cls, *, data: Annotated[Tensor, Shape("F,C")], sample_rate: int) -> Self:
         return cls(data=data, sample_rate=sample_rate)
+
+    @classmethod
+    def empty(cls, *, sample_rate: int, num_channels: int) -> Self:
+        data = torch.zeros(0, num_channels)
+        audio = cls.from_values(data=data, sample_rate=sample_rate)
+
+        return audio
 
     # pylint: disable=redefined-builtin
     @classmethod
@@ -81,13 +89,13 @@ class Audio:
             format=format,
             subtype=subtype,
         )
-        data = torch.from_numpy(data_np).rename(*cls.NAMES)
+        data = torch.from_numpy(data_np)
         audio = cls.from_values(data=data, sample_rate=sample_rate)
 
         return audio
 
     @classmethod
-    def from_pcm_16_byte_str(cls, pcm_16_byte_str: ByteString, *, audio_info: AudioInfo) -> Self:
+    def from_pcm_16_byte_str(cls, pcm_16_byte_str: Buffer, *, audio_info: AudioInfo) -> Self:
         file = BytesIO(pcm_16_byte_str)
         audio = cls.from_file(file=file, audio_format=AudioFormats.PCM_16, audio_info=audio_info)
 
@@ -104,7 +112,7 @@ class Audio:
             data_list.append(audio.data)
 
         data = torch.vstack(data_list)
-        audio = cls(data=data, sample_rate=first_audio.sample_rate)
+        audio = cls.from_values(data=data, sample_rate=first_audio.sample_rate)
 
         return audio
 
@@ -113,24 +121,24 @@ class Audio:
         data_list = [self.data, other.data]
         self.data = torch.vstack(data_list)
 
+    def with_data(self, data: Annotated[Tensor, Shape("F,C")]) -> None:
+        return self.from_values(data=data, sample_rate=self.sample_rate)
+
     def slice(self, *, begin: int, end: int) -> Self:
         data = self.data[begin:end, :]
-        audio = self.from_values(data=data, sample_rate=self.sample_rate)
+        audio = self.with_data(data)
 
         return audio
 
     def resample(self, *, sample_rate: int) -> Self:
-        # NOTE-eb835c: many operations don't yet support named tensors
-        waveform = self.data.rename(None).T
-        data = torchaudio.functional.resample(waveform=waveform, orig_freq=self.sample_rate, new_freq=sample_rate)
-        data = data.T.rename(*self.NAMES)
+        data = torchaudio.functional.resample(waveform=self.data.T, orig_freq=self.sample_rate, new_freq=sample_rate).T
         audio = self.from_values(data=data, sample_rate=sample_rate)
 
         return audio
 
-    def mono(self) -> Self:
-        data = self.data.mean(dim=self.NAME_CHANNELS, keepdim=True)
-        audio = self.from_values(data=data, sample_rate=self.sample_rate)
+    def mean(self, *, num_channels: int) -> Self:
+        data = self.data.mean(dim=self.DIM_CHANNELS, keepdim=True).repeat(1, num_channels)
+        audio = self.with_data(data)
 
         return audio
 
@@ -149,10 +157,10 @@ class Audio:
         }
 
     def num_frames(self) -> int:
-        return self.data.shape[0]
+        return self.data.shape[self.DIM_FRAMES]
 
     def num_channels(self) -> int:
-        return self.data.shape[1]
+        return self.data.shape[self.DIM_CHANNELS]
 
     def info(self) -> AudioInfo:
         return AudioInfo(sample_rate=self.sample_rate, num_channels=self.num_channels())
@@ -176,3 +184,6 @@ class Audio:
         )
 
         return audio_segment
+
+    def vad_input(self) -> Annotated[Tensor, Shape("C,F")]:
+        return self.data.T.float()

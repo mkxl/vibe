@@ -6,11 +6,18 @@ readme = "README.md"
 authors = [
     { name = "michael", email = "66692526+mkxl@users.noreply.github.com" }
 ]
-requires-python = ">=3.11.7"
+requires-python = ">=3.13"
 dependencies = [
-    "humeai-assistant-api>=0.2.541",
+    "audioop-lts>=0.2.1",
     "notebook>=7.4.4",
     "orjson>=3.10.18",
+    "pydub>=0.25.1",
+    "silero-vad>=5.1.2",
+    "sounddevice>=0.5.2",
+    "soundfile>=0.13.1",
+    "torch>=2.7.1",
+    "torchaudio>=2.7.1",
+    "typer>=0.16.0",
 ]
 
 [project.scripts]
@@ -19,6 +26,16 @@ vibe = "vibe.app:App.cli"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "isort>=6.0.1",
+    "pylint>=3.3.7",
+    "pyproject-flake8>=7.0.0",
+    "ruff>=0.12.2",
+    "ty>=0.0.1a13",
+]
 
 [tool.black]
 line-length = 120
@@ -42,6 +59,11 @@ sections = [
 ]
 src_paths = "*"
 
+[tool.pylint.basic]
+good-names = [
+    "P"
+]
+
 [tool.pylint.format]
 max-line-length = 120
 
@@ -64,18 +86,4 @@ output-format = "colorized"
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
-
-[[tool.uv.index]]
-name = "humepy"
-url = "https://us-east4-python.pkg.dev/hume-data/humepy/simple"
-
-[dependency-groups]
-dev = [
-    "black>=25.1.0",
-    "isort>=5.13.2",
-    "pylint>=3.3.7",
-    "pyproject-flake8>=7.0.0",
-    "ruff>=0.12.2",
-    "ty>=0.0.1a13",
-]
+target-version = "py313"

@@ -4,43 +4,50 @@ import inspect
 from asyncio import FIRST_COMPLETED, Future
 from typing import Any, Coroutine, Iterator, Union
 
+import orjson
 from typer import Typer
 
+from vibe.utils.constants import ENCODING
 from vibe.utils.interval import Interval
-from vibe.utils.typing import AsyncFunction, Function, P, T
+from vibe.utils.typing import AsyncFunction, Function
+
+
+class Shape:
+    def __init__(self, *shape: str) -> None:
+        self.shape = shape
 
 
 class Utils:
     @classmethod
-    def add_typer_command(cls, *, typer: Typer, fn: Union[Function[P, T], AsyncFunction[P, T]]) -> None:
+    def add_typer_command[T, **P](cls, *, typer: Typer, fn: Union[Function[P, T], AsyncFunction[P, T]]) -> None:
         if inspect.iscoroutinefunction(fn):
             fn = cls.to_sync_fn(fn)
 
         typer.command()(fn)
 
     @staticmethod
-    def iter_intervals(*, total: int, chunk_size: int) -> Iterator[Interval[int]]:
-        endpoint_range = range(0, total, chunk_size)
+    def iter_intervals(*, begin: int, total: int, chunk_size: int, exact: bool) -> Iterator[Interval[int]]:
+        endpoint_range = range(begin, total, chunk_size)
         endpoint_iter = iter(endpoint_range)
-        begin = next(endpoint_iter, None)
+        interval_begin = next(endpoint_iter, None)
 
-        if begin is None:
+        if interval_begin is None:
             return
 
         for endpoint in endpoint_iter:
-            yield Interval[int](begin=begin, end=endpoint)
+            yield Interval[int](begin=interval_begin, end=endpoint)
 
-            begin = endpoint
+            interval_begin = endpoint
 
-        if begin != total:
-            yield Interval[int](begin=begin, end=total)
+        if not exact and interval_begin != total:
+            yield Interval[int](begin=interval_begin, end=total)
 
     @staticmethod
     async def pending() -> None:
         await Future()
 
     @staticmethod
-    def to_sync_fn(async_fn: AsyncFunction[P, T]) -> Function[P, T]:
+    def to_sync_fn[T, **P](async_fn: AsyncFunction[P, T]) -> Function[P, T]:
         @functools.wraps(async_fn)
         def fn(*args: P.args, **kwds: P.kwargs) -> T:
             coroutine = async_fn(*args, **kwds)
@@ -51,7 +58,14 @@ class Utils:
         return fn
 
     @staticmethod
-    async def wait(*coros: Coroutine[Any, Any, T]) -> None:
+    def value_error(**kwds: Any) -> ValueError:
+        error_str = orjson.dumps(kwds).decode(ENCODING)
+        value_error = ValueError(error_str)
+
+        return value_error
+
+    @staticmethod
+    async def wait[T](*coros: Coroutine[Any, Any, T]) -> None:
         # NOTE: can't use a generator here but map() works
         tasks = map(asyncio.create_task, coros)
 

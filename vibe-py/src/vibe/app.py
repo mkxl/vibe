@@ -6,12 +6,12 @@ from typing import Annotated, ClassVar, Optional
 import sounddevice
 from typer import Option, Typer
 
-from vibe.main import Main
 from vibe.utils.audio import Audio, AudioFormats
 from vibe.utils.datetime import Datetime
 from vibe.utils.logger import Logger
 from vibe.utils.microphone import Microphone
 from vibe.utils.utils import Utils
+from vibe.vad import Vad
 
 logger = Logger.new(__name__)
 
@@ -28,7 +28,7 @@ class App:
 
         Utils.add_typer_command(typer=typer, fn=cls.devices)
         Utils.add_typer_command(typer=typer, fn=cls.microphone)
-        Utils.add_typer_command(typer=typer, fn=Main.run)
+        Utils.add_typer_command(typer=typer, fn=cls.vad)
 
         typer()
 
@@ -67,3 +67,17 @@ class App:
             wav_byte_str = audio.byte_str(audio_format=AudioFormats.WAV)
 
             out_filepath.write_bytes(wav_byte_str)
+
+    @classmethod
+    async def vad(
+        cls,
+        *,
+        device: Annotated[int, Option()] = Microphone.DEFAULT_DEVICE,
+    ) -> None:
+        with logger.bookend(message="vad"):
+            vad = Vad.new()
+
+            async with Microphone.context(device=device) as microphone:
+                async for microphone_input in microphone:
+                    for vad_result in vad.add(audio=microphone_input.audio):
+                        logger.info(vad_result_interval=vad_result.interval)

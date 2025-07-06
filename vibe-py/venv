@@ -1,4 +1,5 @@
 #!/usr/bin/env fish
-set --export UV_INDEX_HUMEPY_USERNAME oauth2accesstoken
-set --export UV_INDEX_HUMEPY_PASSWORD (gcloud auth print-access-token)
-fish --init-command="source ./.venv/bin/activate.fish"
+true \
+  && set --export UV_INDEX_HUMEPY_USERNAME oauth2accesstoken \
+  && set --export UV_INDEX_HUMEPY_PASSWORD (gcloud auth print-access-token) \
+  && fish --init-command="source ./.venv/bin/activate.fish"

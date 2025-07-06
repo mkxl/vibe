@@ -2,15 +2,13 @@ import asyncio
 import collections
 import dataclasses
 from asyncio import AbstractEventLoop, Future
-from typing import ClassVar, Generic, Self, TypeVar
-
-T = TypeVar("T")
+from typing import ClassVar, Self
 
 
 # NOTE: prefer this implementation over the hume __await__ based one because of
 # [https://stackoverflow.com/a/63966273]
 @dataclasses.dataclass(kw_only=True)
-class Queue(Generic[T]):
+class Queue[T]:
     APPEND_ITEM_ERROR_MESSAGE: ClassVar[str] = "unable to append item because the queue is closed"
     INITIAL_CLOSED: ClassVar[bool] = False
 
