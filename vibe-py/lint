@@ -1,0 +1,7 @@
+#!/usr/bin/env fish
+debug isort --settings-file=pyproject.toml src \
+  && debug black --config=pyproject.toml src \
+  && debug ruff check --config=pyproject.toml src \
+  && debug ty check src \
+  && debug pflake8 --config=pyproject.toml src \
+  && debug pylint --rcfile=pyproject.toml src

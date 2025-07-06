@@ -1,0 +1,81 @@
+[project]
+name = "vibe"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "michael", email = "66692526+mkxl@users.noreply.github.com" }
+]
+requires-python = ">=3.11.7"
+dependencies = [
+    "humeai-assistant-api>=0.2.541",
+    "notebook>=7.4.4",
+    "orjson>=3.10.18",
+]
+
+[project.scripts]
+vibe = "vibe.app:App.cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.black]
+line-length = 120
+
+# NOTE: `ignore = ""` required to disable default ignores
+[tool.flake8]
+ignore = ""
+max-line-length = 120
+
+[tool.isort]
+known_vibe = "vibe"
+line_length = 120
+profile = "black"
+sections = [
+  'FUTURE',
+  'STDLIB',
+  'THIRDPARTY',
+  'VIBE',
+  'FIRSTPARTY',
+  'LOCALFOLDER',
+]
+src_paths = "*"
+
+[tool.pylint.format]
+max-line-length = 120
+
+[tool.pylint.master]
+extension-pkg-allow-list = [
+    "orjson",
+]
+
+[tool.pylint.messages_control]
+disable = [
+    "fixme",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "missing-module-docstring",
+    "too-few-public-methods",
+]
+
+[tool.pylint.reports]
+output-format = "colorized"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[[tool.uv.index]]
+name = "humepy"
+url = "https://us-east4-python.pkg.dev/hume-data/humepy/simple"
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "isort>=5.13.2",
+    "pylint>=3.3.7",
+    "pyproject-flake8>=7.0.0",
+    "ruff>=0.12.2",
+    "ty>=0.0.1a13",
+]
