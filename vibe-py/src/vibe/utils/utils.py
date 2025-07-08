@@ -25,6 +25,10 @@ class Utils:
 
         typer.command()(fn)
 
+    @classmethod
+    def invalid_result(cls, invalid_result: Any) -> ValueError:
+        return cls.value_error(invalid_result=invalid_result)
+
     @staticmethod
     def iter_intervals(*, begin: int, total: int, chunk_size: int, exact: bool) -> Iterator[Interval[int]]:
         endpoint_range = range(begin, total, chunk_size)
@@ -49,8 +53,8 @@ class Utils:
     @staticmethod
     def to_sync_fn[T, **P](async_fn: AsyncFunction[P, T]) -> Function[P, T]:
         @functools.wraps(async_fn)
-        def fn(*args: P.args, **kwds: P.kwargs) -> T:
-            coroutine = async_fn(*args, **kwds)
+        def fn(*args: P.args, **kwargs: P.kwargs) -> T:
+            coroutine = async_fn(*args, **kwargs)
             value = asyncio.run(coroutine)
 
             return value
@@ -58,8 +62,8 @@ class Utils:
         return fn
 
     @staticmethod
-    def value_error(**kwds: Any) -> ValueError:
-        error_str = orjson.dumps(kwds).decode(ENCODING)
+    def value_error(**kwargs: Any) -> ValueError:
+        error_str = orjson.dumps(kwargs).decode(ENCODING)
         value_error = ValueError(error_str)
 
         return value_error

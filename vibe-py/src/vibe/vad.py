@@ -36,8 +36,9 @@ class Vad:
     audio: Audio
     audio_chunks: collections.deque[Audio]
     audio_cursor: int
-    interval_begin: Optional[int]
     iterator: VADIterator
+    latest_interval_begin: Optional[int]
+    results: list[VadResult]
 
     @classmethod
     def new(
@@ -55,8 +56,9 @@ class Vad:
             audio=audio,
             audio_chunks=collections.deque(),
             audio_cursor=cls.INITIAL_CURSOR,
-            interval_begin=None,
             iterator=iterator,
+            latest_interval_begin=None,
+            results=[],
         )
 
         return vad
@@ -89,10 +91,7 @@ class Vad:
 
     @classmethod
     def _preprocess_audio(cls, *, audio: Audio) -> Audio:
-        if audio.sample_rate != cls.SAMPLE_RATE:
-            audio = audio.resample(sample_rate=cls.SAMPLE_RATE)
-
-        return audio.mean(num_channels=cls.NUM_CHANNELS)
+        return audio.resample(sample_rate=cls.SAMPLE_RATE).mean(num_channels=cls.NUM_CHANNELS)
 
     def _iter_speech_dicts(self, *, audio: Audio) -> Iterator[JsonObject]:
         yield from self._iter_speech_dicts_helper()
@@ -103,19 +102,26 @@ class Vad:
 
         yield from self._iter_speech_dicts_helper()
 
-    def add(self, *, audio: Audio) -> Iterator[Audio]:
+    def _on_end(self, *, interval_end: int) -> VadResult:
+        interval = Interval[int](begin=self.latest_interval_begin, end=interval_end)
+        result_audio = self.audio.slice(begin=interval.begin, end=interval.end)
+        result = VadResult(interval=interval, audio=result_audio)
+        self.latest_interval_begin = None
+
+        self.results.append(result)
+
+        return result
+
+    def add(self, *, audio: Audio) -> Iterator[VadResult]:
         for speech_dict in self._iter_speech_dicts(audio=audio):
             match speech_dict:
-                case {"start": int(interval_begin)} if self.interval_begin is None:
-                    self.interval_begin = interval_begin
-                case {"end": int(interval_end)} if self.interval_begin is not None:
-                    interval = Interval[int](begin=self.interval_begin, end=interval_end)
-                    vad_result_audio = self.audio.slice(begin=interval.begin, end=interval.end)
-                    vad_result = VadResult(interval=interval, audio=vad_result_audio)
-                    self.interval_begin = None
-
-                    yield vad_result
+                case {"start": int(latest_interval_begin)} if self.latest_interval_begin is None:
+                    self.latest_interval_begin = latest_interval_begin
+                case {"end": int(interval_end)} if self.latest_interval_begin is not None:
+                    yield self._on_end(interval_end=interval_end)
                 case _:
                     raise Utils.value_error(
-                        message="invalid state", speech_dict=speech_dict, interval_begin=self.interval_begin
+                        message="invalid state",
+                        speech_dict=speech_dict,
+                        latest_interval_begin=self.latest_interval_begin,
                     )

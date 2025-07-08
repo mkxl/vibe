@@ -17,6 +17,7 @@ dependencies = [
     "soundfile>=0.13.1",
     "torch>=2.7.1",
     "torchaudio>=2.7.1",
+    "tritonclient[http]>=2.59.0",
     "typer>=0.16.0",
 ]
 

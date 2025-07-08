@@ -2,6 +2,7 @@ import contextlib
 import dataclasses
 import datetime
 import functools
+import inspect
 import logging
 import traceback
 from contextvars import ContextVar
@@ -9,12 +10,12 @@ from enum import StrEnum
 from logging import Formatter as StdFormatter
 from logging import Logger as StdLogger
 from logging import LogRecord, StreamHandler
-from typing import Any, ClassVar, Iterator, Optional, Self, Union
+from typing import Any, Callable, ClassVar, Iterator, Optional, Self, Union
 
 import orjson
 
 from vibe.utils.constants import ENCODING
-from vibe.utils.typing import JsonObject
+from vibe.utils.typing import AnyFunction, JsonObject
 
 
 class Level(StrEnum):
@@ -85,8 +86,8 @@ class Logger:
 
     @classmethod
     @contextlib.contextmanager
-    def context(cls, fields_dict: Optional[JsonObject] = None, **fields_kwds: Any) -> Iterator[None]:
-        new_fields = fields_kwds if fields_dict is None else (fields_dict | fields_kwds)
+    def context(cls, fields_dict: Optional[JsonObject] = None, **fields_kwargs: Any) -> Iterator[None]:
+        new_fields = fields_kwargs if fields_dict is None else (fields_dict | fields_kwargs)
         merged_fields = cls._merge_fields(current_fields=cls.CONTEXT_VAR.get(), new_fields=new_fields)
         token = cls.CONTEXT_VAR.set(merged_fields)
 
@@ -101,6 +102,24 @@ class Logger:
         traceback_str = "".join(traceback_lines)
 
         return traceback_str
+
+    def instrument[**P, T](self) -> Callable[[AnyFunction[P, T]], AnyFunction[P, T]]:
+        def decorator(fn: AnyFunction[P, T]) -> AnyFunction[P, T]:
+            if inspect.iscoroutinefunction(fn):
+
+                async def new_fn(*args: P.args, **kwargs: P.kwargs) -> T:
+                    with self.bookend(message=fn.__name__):
+                        return await fn(*args, **kwargs)
+
+            else:
+
+                def new_fn(*args: P.args, **kwargs: P.kwargs) -> T:
+                    with self.bookend(message=fn.__name__):
+                        return fn(*args, **kwargs)
+
+            return functools.wraps(fn)(new_fn)
+
+        return decorator
 
     @classmethod
     def init(

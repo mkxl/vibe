@@ -1,7 +1,8 @@
 import dataclasses
-from collections.abc import Buffer
+import functools
+from enum import StrEnum
 from io import BytesIO
-from typing import Annotated, BinaryIO, ClassVar, Iterable, Optional, Self
+from typing import Annotated, ClassVar, Iterable, Optional, Self
 
 import sounddevice
 import soundfile
@@ -11,11 +12,12 @@ from pydub import AudioSegment
 from torch import Tensor
 
 from vibe.utils.typing import JsonObject
-from vibe.utils.utils import Shape
+from vibe.utils.utils import Shape, Utils
 
 
+# TODO-959e20
 @dataclasses.dataclass(kw_only=True)
-class AudioFormat:
+class AudioFormatInfo:
     format: str
     subtype: Optional[str]
 
@@ -23,14 +25,24 @@ class AudioFormat:
         return (self.format, self.subtype)
 
 
-class AudioFormats:
-    WAV = AudioFormat(format="WAV", subtype=None)
-    PCM_16 = AudioFormat(format="RAW", subtype="PCM_16")
-    FLOAT = AudioFormat(format="RAW", subtype="FLOAT")
+# TODO-959e20: find approach that allows you to do an Enum that can be deserialized from a string and plays nicely with
+# typer...maybe a metaclass or something that will create a StrEnum with an info field like the below idk
+class AudioFormat(StrEnum):
+    WAV = "WAV"
+    PCM_16 = "PCM_16"
+    FLOAT = "FLOAT"
 
-    @classmethod
-    def from_str(cls, name: str) -> AudioFormat:
-        return vars(cls)[name.upper()]
+    @functools.cached_property
+    def info(self) -> AudioFormatInfo:
+        match self:
+            case AudioFormat.WAV:
+                return AudioFormatInfo(format="WAV", subtype=None)
+            case AudioFormat.PCM_16:
+                return AudioFormatInfo(format="RAW", subtype="PCM_16")
+            case AudioFormat.FLOAT:
+                return AudioFormatInfo(format="RAW", subtype="FLOAT")
+            case _:
+                raise Utils.invalid_result(self)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -76,10 +88,11 @@ class Audio:
 
     # pylint: disable=redefined-builtin
     @classmethod
-    def from_file(
-        cls, *, file: BinaryIO, audio_format: Optional[AudioFormat] = None, audio_info: Optional[AudioInfo] = None
+    def new(
+        cls, *, byte_str: bytes, audio_format: Optional[AudioFormat] = None, audio_info: Optional[AudioInfo] = None
     ) -> Self:
-        format, subtype = (None, None) if audio_format is None else audio_format.pair()
+        file = BytesIO(byte_str)
+        format, subtype = (None, None) if audio_format is None else audio_format.info.pair()
         samplerate, channels = (None, None) if audio_info is None else audio_info.pair()
         data_np, sample_rate = soundfile.read(
             file,
@@ -91,13 +104,6 @@ class Audio:
         )
         data = torch.from_numpy(data_np)
         audio = cls.from_values(data=data, sample_rate=sample_rate)
-
-        return audio
-
-    @classmethod
-    def from_pcm_16_byte_str(cls, pcm_16_byte_str: Buffer, *, audio_info: AudioInfo) -> Self:
-        file = BytesIO(pcm_16_byte_str)
-        audio = cls.from_file(file=file, audio_format=AudioFormats.PCM_16, audio_info=audio_info)
 
         return audio
 
@@ -131,7 +137,13 @@ class Audio:
         return audio
 
     def resample(self, *, sample_rate: int) -> Self:
-        data = torchaudio.functional.resample(waveform=self.data.T, orig_freq=self.sample_rate, new_freq=sample_rate).T
+        data = (
+            self.data
+            if self.sample_rate == sample_rate
+            else torchaudio.functional.resample(
+                waveform=self.data.T, orig_freq=self.sample_rate, new_freq=sample_rate
+            ).T
+        )
         audio = self.from_values(data=data, sample_rate=sample_rate)
 
         return audio
@@ -171,14 +183,14 @@ class Audio:
             bytes_io,
             self.data,
             samplerate=self.sample_rate,
-            subtype=audio_format.subtype,
-            format=audio_format.format,
+            subtype=audio_format.info.subtype,
+            format=audio_format.info.format,
         )
 
         return bytes_io.getvalue()
 
     def segment(self) -> AudioSegment:
-        data = self.byte_str(audio_format=AudioFormats.PCM_16)
+        data = self.byte_str(audio_format=AudioFormat.PCM_16)
         audio_segment = AudioSegment(
             data=data, sample_width=self.SAMPLE_WIDTH_PCM_16, frame_rate=self.sample_rate, channels=self.num_channels()
         )
