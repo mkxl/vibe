@@ -1,7 +1,7 @@
 import asyncio
 import functools
 import inspect
-from asyncio import FIRST_COMPLETED
+from asyncio import FIRST_COMPLETED, Future
 from typing import Any, ClassVar, Coroutine, Iterator, Optional, Union
 
 import orjson
@@ -25,6 +25,17 @@ class Utils:
             fn = cls.to_sync_fn(fn)
 
         typer.command()(fn)
+
+    # NOTE: make this an async method to ensure it's being called from an async context to ensure that
+    # [asyncio.get_running_loop()] can run
+    @staticmethod
+    async def future[T]() -> Future[T]:
+        # NOTE:
+        # - prefer [asyncio.get_running_loop()] over [asyncio.get_event_loop] per
+        #   [https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.get_event_loop]
+        # - prefer [loop.create_future()] over [asyncio.Future()] per
+        #   [https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.get_event_loop]
+        return asyncio.get_running_loop().create_future()
 
     @classmethod
     def invalid_result(cls, invalid_result: Any) -> ValueError:
@@ -50,14 +61,6 @@ class Utils:
     @staticmethod
     def is_none_or_empty(*, text: Optional[str]) -> bool:
         return text is None or text == ""
-
-    @staticmethod
-    async def pending() -> None:
-        # NOTE:
-        # - NOTE-bcd471
-        # - prefer [loop.create_future()] over [asyncio.Future()] per
-        #   [https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.get_event_loop]
-        await asyncio.get_running_loop().create_future()
 
     @staticmethod
     def to_sync_fn[T, **P](async_fn: AsyncFunction[P, T]) -> Function[P, T]:

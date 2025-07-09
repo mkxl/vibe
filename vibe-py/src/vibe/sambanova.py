@@ -3,13 +3,12 @@ from http import HTTPMethod
 from typing import AsyncIterator, ClassVar, Optional
 
 import pydantic
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 from vibe.conversation import ChatMessage, Conversation
 from vibe.language_model import LanguageModel
 from vibe.utils.http import Http, Request
 from vibe.utils.logger import Logger
-from vibe.utils.pydantic import FORBID_EXTRA
 from vibe.utils.typing import JsonObject
 
 logger: Logger = Logger.new(__name__)
@@ -27,8 +26,6 @@ class SambanovaTool(BaseModel):
 
 
 class SambanovaRequest(BaseModel):
-    model_config: ClassVar[ConfigDict] = FORBID_EXTRA
-
     model: str
     messages: list[ChatMessage]
     tools: Optional[list[SambanovaTool]]
@@ -37,6 +34,11 @@ class SambanovaRequest(BaseModel):
     @pydantic.computed_field
     def stream(self) -> bool:
         return True
+
+    # NOTE-f94e7d
+    @pydantic.computed_field
+    def tool_choice(self) -> str:
+        return "auto"
 
 
 class SambanovaResponseChunkChoice(BaseModel):
@@ -66,7 +68,8 @@ class Sambanova(LanguageModel):
         return content
 
     # pylint: disable=invalid-overridden-method
-    async def _respond(self, *, conversation: Conversation) -> AsyncIterator[str]:
+    @logger.instrument()
+    async def _iter_chat_messages(self, *, conversation: Conversation) -> AsyncIterator[ChatMessage]:
         content = self._content(conversation=conversation)
         request = (
             Request.new(http=self.http, method=HTTPMethod.POST, url=self.URL)
@@ -76,9 +79,4 @@ class Sambanova(LanguageModel):
         )
 
         async for chunk in request.iter_sse(base_model_type=SambanovaResponseChunk):
-            chat_message = chunk.choices[0].delta
-
-            logger.info(delta_chat_message=chat_message)
-
-            if chat_message.content is not None:
-                yield chat_message.content
+            yield chunk.choices[0].delta

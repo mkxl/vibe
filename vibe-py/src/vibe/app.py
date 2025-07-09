@@ -50,8 +50,8 @@ class App:
         audio_list = []
 
         try:
-            async with Microphone.context(device=device, dtype=dtype) as microphone:
-                async for microphone_input in microphone:
+            with Microphone.context(device=device, dtype=dtype) as microphone:
+                async for microphone_input in microphone.input_queue:
                     audio_list.append(microphone_input.audio)
         finally:
             wav_byte_str = Audio.cat(audio_list).byte_str(audio_format=AudioFormat.WAV)

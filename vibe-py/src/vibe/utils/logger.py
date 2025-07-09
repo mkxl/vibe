@@ -64,12 +64,12 @@ class Logger:
         self.log(level=Level.ERROR, **fields)
 
     @contextlib.contextmanager
-    def bookend(self, message: str, *, level: Level = DEFAULT_LEVEL) -> Iterator[None]:
-        self.log(level=level, message=message, bookend="begin")
+    def bookend(self, where: str, *, level: Level = DEFAULT_LEVEL) -> Iterator[None]:
+        self.log(level=level, where=where, when="begin")
 
         yield
 
-        self.log(level=level, message=message, bookend="end")
+        self.log(level=level, where=where, when="end")
 
     @classmethod
     def _merge_fields(cls, *, current_fields: JsonObject, new_fields: JsonObject) -> JsonObject:
@@ -107,16 +107,29 @@ class Logger:
 
     def instrument[**P, T](self) -> Callable[[AnyFunction[P, T]], AnyFunction[P, T]]:
         def decorator(fn: AnyFunction[P, T]) -> AnyFunction[P, T]:
-            if inspect.iscoroutinefunction(fn):
+            if inspect.isgeneratorfunction(fn):
+
+                def new_fn(*args: P.args, **kwargs: P.kwargs) -> T:  # ty: ignore[invalid-return-type]
+                    with self.bookend(where=fn.__name__):
+                        yield from fn(*args, **kwargs)
+
+            elif inspect.iscoroutinefunction(fn):
 
                 async def new_fn(*args: P.args, **kwargs: P.kwargs) -> T:
-                    with self.bookend(message=fn.__name__):
+                    with self.bookend(where=fn.__name__):
                         return await fn(*args, **kwargs)
+
+            elif inspect.isasyncgenfunction(fn):
+
+                async def new_fn(*args: P.args, **kwargs: P.kwargs) -> T:  # ty: ignore[invalid-return-type]
+                    with self.bookend(where=fn.__name__):
+                        async for value in fn(*args, **kwargs):
+                            yield value
 
             else:
 
                 def new_fn(*args: P.args, **kwargs: P.kwargs) -> T:
-                    with self.bookend(message=fn.__name__):
+                    with self.bookend(where=fn.__name__):
                         return fn(*args, **kwargs)
 
             return functools.wraps(fn)(new_fn)

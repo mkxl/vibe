@@ -1,14 +1,14 @@
 import dataclasses
 from enum import StrEnum
-from typing import ClassVar, Optional, Self
+from typing import Optional, Self
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
-from vibe.utils.pydantic import FORBID_EXTRA
 from vibe.utils.string_sequence import StringSequence
 
 
 class Role(StrEnum):
+    SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
 
@@ -25,8 +25,6 @@ class ToolCall(BaseModel):
 
 # NOTE-e71aa5: use [= <default>] for pydantic fields bc of [ty]
 class ChatMessage(BaseModel):
-    model_config: ClassVar[ConfigDict] = FORBID_EXTRA
-
     role: Role
     content: Optional[str]
     tool_calls: Optional[list[ToolCall]] = None
@@ -38,8 +36,12 @@ class Turn:
     texts: StringSequence
 
     @classmethod
-    def new(cls, *, role: Role) -> Self:
-        return cls(role=role, texts=StringSequence.new())
+    def new(cls, *, role: Role, text: str) -> Self:
+        turn = cls(role=role, texts=StringSequence.new())
+
+        turn.texts.append(text)
+
+        return turn
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -47,21 +49,22 @@ class Conversation:
     turns: list[Turn]
 
     @classmethod
-    def new(cls) -> Self:
-        return cls(turns=[])
+    def new(cls, *, system_prompt: str) -> Self:
+        conversation = cls(turns=[])
 
-    def ensure_last(self, *, role: Role) -> Turn:
-        if 0 < len(self.turns):
-            return self.turns[-1]
+        if system_prompt != "":
+            conversation.append(role=Role.SYSTEM, text=system_prompt)
 
-        last_turn = Turn.new(role=role)
-
-        self.turns.append(last_turn)
-
-        return last_turn
+        return conversation
 
     def append(self, *, role: Role, text: str) -> None:
-        self.ensure_last(role=role).texts.append(text)
+        match self.turns:
+            case [*_, last_turn] if last_turn.role == role:
+                last_turn.texts.append(text)
+            case _:
+                last_turn = Turn.new(role=role, text=text)
+
+                self.turns.append(last_turn)
 
     def chat_messages(self) -> list[ChatMessage]:
         return [ChatMessage(role=turn.role, content=turn.texts.string()) for turn in self.turns]

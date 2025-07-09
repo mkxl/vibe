@@ -1,10 +1,8 @@
-import asyncio
 import contextlib
 import dataclasses
 import functools
-from asyncio import AbstractEventLoop
 from enum import StrEnum
-from typing import AsyncIterator, ClassVar, Self
+from typing import ClassVar, Iterator, Self
 
 import _cffi_backend  # ty: ignore[unresolved-import]
 from _cffi_backend import _CDataBase as CDataBase  # pylint: disable=no-name-in-module  # ty: ignore[unresolved-import]
@@ -63,11 +61,7 @@ class Microphone:
 
     audio_info: AudioInfo
     dtype: Dtype
-    event_loop: AbstractEventLoop
-    queue: Queue[MicrophoneInput]
-
-    def __aiter__(self) -> AsyncIterator[MicrophoneInput]:
-        return self.queue
+    input_queue: Queue[MicrophoneInput]
 
     # NOTE: type annotations gotten from logging
     def _callback(
@@ -80,7 +74,9 @@ class Microphone:
         # NOTE: _cffi_backend.buffer returns bytes when sliced
         microphone_input = MicrophoneInput.new(byte_str=indata[:], audio_info=self.audio_info, dtype=self.dtype)
 
-        self.event_loop.call_soon_threadsafe(self.queue.append, microphone_input)
+        # NOTE: do this rather than [self.input_queue.event_loop().create_task(asend_coro)] to preclude the possibility
+        # of microphone inputs getting added out of order
+        self.input_queue.event_loop().call_soon_threadsafe(self.input_queue.append, microphone_input)
 
     def _raw_input_stream(self) -> RawInputStream:
         return RawInputStream(
@@ -91,13 +87,11 @@ class Microphone:
         )
 
     @classmethod
-    @contextlib.asynccontextmanager
-    async def context(cls, *, device: int = DEFAULT_DEVICE, dtype: Dtype = DEFAULT_DTYPE) -> AsyncIterator[Self]:
-        # NOTE-bcd471: prefer [asyncio.get_running_loop()] over [asyncio.get_event_loop] per
-        # [https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.get_event_loop]
-        queue = Queue.new()
+    @contextlib.contextmanager
+    def context(cls, *, device: int = DEFAULT_DEVICE, dtype: Dtype = DEFAULT_DTYPE) -> Iterator[Self]:
+        input_queue = Queue.new()
         audio_info = AudioInfo.from_device(device=device)
-        microphone = cls(audio_info=audio_info, dtype=dtype, event_loop=asyncio.get_running_loop(), queue=queue)
+        microphone = cls(audio_info=audio_info, dtype=dtype, input_queue=input_queue)
 
         if audio_info.num_channels == 0:
             raise ValueError(cls.ZERO_INPUT_CHANNELS_ERROR_MESSAGE)

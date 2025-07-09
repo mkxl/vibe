@@ -37,21 +37,26 @@ class Chat:
         config = Config.model_validate_json(config_filepath.read_text())
         transcription_task_queue = TaskQueue.new()
         language_model_response_queue = Queue.new()
+        conversation = Conversation.new(system_prompt=config.system_prompt)
 
-        async with Microphone.context(device=device, dtype=dtype) as microphone, Http.context() as http:
-            language_model = Sambanova(
-                http=http, model=config.sambanova_model, api_key=config.sambanova_api_key, tools=config.sambanova_tools
-            )
-            chat = cls(
-                conversation=Conversation.new(),
-                language_model=language_model,
-                microphone=microphone,
-                language_model_response_queue=language_model_response_queue,
-                transcription_task_queue=transcription_task_queue,
-                vad=Vad.new(),
-            )
+        with Microphone.context(device=device, dtype=dtype) as microphone:
+            async with Http.context() as http:
+                language_model = Sambanova(
+                    http=http,
+                    model=config.sambanova_model,
+                    api_key=config.sambanova_api_key,
+                    tools=config.sambanova_tools,
+                )
+                chat = cls(
+                    conversation=conversation,
+                    language_model=language_model,
+                    microphone=microphone,
+                    language_model_response_queue=language_model_response_queue,
+                    transcription_task_queue=transcription_task_queue,
+                    vad=Vad.new(),
+                )
 
-            yield chat
+                yield chat
 
     @classmethod
     async def _transcribe_and_eot(cls, *, audio: Audio, user_last: bool) -> tuple[Optional[str], EotDetectionResult]:
@@ -62,36 +67,46 @@ class Chat:
         return (transcription, eot_detection_result)
 
     async def _queue_transcriptions(self) -> None:
-        async for microphone_input in self.microphone:
+        async for microphone_input in self.microphone.input_queue:
             for vad_result in self.vad.add(audio=microphone_input.audio):
                 # TODO: use self._transcribe_and_eot()
                 transcription_coro = Transcription(audio=vad_result.audio).result()
 
+                # NOTE-c8ddfc: call [Utils.yield_now()] bc this is a synchronous for loop
                 self.transcription_task_queue.append(transcription_coro)
 
-                # NOTE-c8ddfc: yield bc this is a synchronous for loop
                 await Utils.yield_now()
 
-    async def _queue_responses(self) -> None:
+    async def _queue_language_model_responses(self) -> None:
         async for transcription in self.transcription_task_queue:
-            logger.info(transcription=transcription)
-
             if Utils.is_none_or_empty(text=transcription):
                 continue
 
             self.conversation.append(role=Role.USER, text=transcription)
 
-            language_model_response_coro = await self.language_model.respond(conversation=self.conversation)
+            language_model_response = self.language_model.respond(conversation=self.conversation)
 
-            self.language_model_response_queue.append(language_model_response_coro)
+            self.language_model_response_queue.append(language_model_response)
+
+    async def _process_language_model_text(self, *, language_model_response: LanguageModelResponse) -> None:
+        async for text in language_model_response.text_queue:
+            self.conversation.append(role=Role.ASSISTANT, text=text)
+
+    async def _process_language_model_tool_calls(self, *, language_model_response: LanguageModelResponse) -> None:
+        async for _tool_call in language_model_response.tool_call_queue:
+            pass
 
     async def _process(self) -> None:
         async for language_model_response in self.language_model_response_queue:
-            async for text in language_model_response.queue:
-                logger.info(text=text)
+            text_coro = self._process_language_model_text(language_model_response=language_model_response)
+            tool_calls_coro = self._process_language_model_tool_calls(language_model_response=language_model_response)
+
+            await asyncio.gather(text_coro, tool_calls_coro)
+
+            logger.info(conversation_chat_messages=self.conversation.chat_messages())
 
     async def _run(self) -> None:
-        await Utils.wait(self._queue_transcriptions(), self._queue_responses(), self._process())
+        await Utils.wait(self._queue_transcriptions(), self._queue_language_model_responses(), self._process())
 
     @classmethod
     @logger.instrument()
