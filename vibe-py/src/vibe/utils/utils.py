@@ -1,13 +1,12 @@
 import asyncio
 import functools
 import inspect
-from asyncio import FIRST_COMPLETED, Future
-from typing import Any, Coroutine, Iterator, Union
+from asyncio import FIRST_COMPLETED
+from typing import Any, ClassVar, Coroutine, Iterator, Optional, Union
 
 import orjson
 from typer import Typer
 
-from vibe.utils.constants import ENCODING
 from vibe.utils.interval import Interval
 from vibe.utils.typing import AsyncFunction, Function
 
@@ -18,8 +17,10 @@ class Shape:
 
 
 class Utils:
+    ENCODING: ClassVar[str] = "utf-8"
+
     @classmethod
-    def add_typer_command[T, **P](cls, *, typer: Typer, fn: Union[Function[P, T], AsyncFunction[P, T]]) -> None:
+    def add_typer_command(cls, *, typer: Typer, fn: Union[Function[Any, Any], AsyncFunction[Any, Any]]) -> None:
         if inspect.iscoroutinefunction(fn):
             fn = cls.to_sync_fn(fn)
 
@@ -47,8 +48,16 @@ class Utils:
             yield Interval[int](begin=interval_begin, end=total)
 
     @staticmethod
+    def is_none_or_empty(*, text: Optional[str]) -> bool:
+        return text is None or text == ""
+
+    @staticmethod
     async def pending() -> None:
-        await Future()
+        # NOTE:
+        # - NOTE-bcd471
+        # - prefer [loop.create_future()] over [asyncio.Future()] per
+        #   [https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.get_event_loop]
+        await asyncio.get_running_loop().create_future()
 
     @staticmethod
     def to_sync_fn[T, **P](async_fn: AsyncFunction[P, T]) -> Function[P, T]:
@@ -61,15 +70,15 @@ class Utils:
 
         return fn
 
-    @staticmethod
-    def value_error(**kwargs: Any) -> ValueError:
-        error_str = orjson.dumps(kwargs).decode(ENCODING)
+    @classmethod
+    def value_error(cls, **kwargs: Any) -> ValueError:
+        error_str = orjson.dumps(kwargs).decode(cls.ENCODING)
         value_error = ValueError(error_str)
 
         return value_error
 
     @staticmethod
-    async def wait[T](*coros: Coroutine[Any, Any, T]) -> None:
+    async def wait(*coros: Coroutine[Any, Any, Any]) -> None:
         # NOTE: can't use a generator here but map() works
         tasks = map(asyncio.create_task, coros)
 

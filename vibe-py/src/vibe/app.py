@@ -12,7 +12,7 @@ from vibe.utils.logger import Logger
 from vibe.utils.microphone import Dtype, Microphone
 from vibe.utils.utils import Utils
 
-logger = Logger.new(__name__)
+logger: Logger = Logger.new(__name__)
 
 
 @dataclasses.dataclass(kw_only=True)

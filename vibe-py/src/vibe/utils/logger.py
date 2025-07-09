@@ -13,9 +13,10 @@ from logging import LogRecord, StreamHandler
 from typing import Any, Callable, ClassVar, Iterator, Optional, Self, Union
 
 import orjson
+from pydantic import BaseModel
 
-from vibe.utils.constants import ENCODING
 from vibe.utils.typing import AnyFunction, JsonObject
+from vibe.utils.utils import Utils
 
 
 class Level(StrEnum):
@@ -34,6 +35,7 @@ class Logger:
     CONTEXT_VAR: ClassVar[ContextVar[JsonObject]] = ContextVar("logger", default={})  # ty: ignore[invalid-assignment]
     DEFAULT_INCLUDE_SPANS: ClassVar[bool] = False
     DEFAULT_LEVEL: ClassVar[Level] = Level.INFO
+    DEFAULT_POPULATE_MESSAGE: ClassVar[bool] = False
     FORCE: ClassVar[bool] = True
     SPANS_FIELD_NAME: ClassVar[str] = "spans"
 
@@ -123,20 +125,28 @@ class Logger:
 
     @classmethod
     def init(
-        cls, *, stream: Optional[Any] = None, level: Level = DEFAULT_LEVEL, include_spans: bool = DEFAULT_INCLUDE_SPANS
+        cls,
+        *,
+        stream: Optional[Any] = None,
+        level: Level = DEFAULT_LEVEL,
+        include_spans: bool = DEFAULT_INCLUDE_SPANS,
+        populate_message: bool = DEFAULT_POPULATE_MESSAGE,
     ) -> None:
         stream_handler = StreamHandler(stream=stream)
-        json_formatter = JsonFormatter(include_spans=include_spans)
+        json_formatter = JsonFormatter(include_spans=include_spans, populate_message=populate_message)
 
         stream_handler.setFormatter(json_formatter)
         logging.basicConfig(handlers=[stream_handler], level=level.level, force=cls.FORCE)
 
 
 class JsonFormatter(StdFormatter):
-    def __init__(self, *, include_spans: bool):
+    PYDANTIC_BASE_MODEL_DUMP_MODE: ClassVar[str] = "json"
+
+    def __init__(self, *, include_spans: bool, populate_message: bool):
         super().__init__()
 
         self._include_spans = include_spans
+        self._populate_message = populate_message
 
     def _fields(self, *, log_record: LogRecord) -> JsonObject:
         log_record_fields = getattr(log_record, "fields", {})
@@ -151,24 +161,28 @@ class JsonFormatter(StdFormatter):
 
         return fields
 
-    @staticmethod
-    def _message(*, fields: JsonObject) -> str:
-        return " ".join(f"{key}={value!r}" for (key, value) in fields.items())
+    def _message(self, *, record: LogRecord, fields: JsonObject) -> Optional[str]:
+        if record.msg is not None:
+            return record.getMessage()
 
-    @staticmethod
-    def _default(o: Any) -> Union[str, JsonObject]:
-        # TODO: decide what i'm doing here
-        # if isinstance(o, BaseModel):
-        #     return json.loads(o.model_dump_json())
+        if self._populate_message:
+            return " ".join(f"{key}={value!r}" for (key, value) in fields.items())
 
-        return str(o)
+        return None
+
+    @classmethod
+    def _default(cls, value: Any) -> Union[str, JsonObject]:
+        if isinstance(value, BaseModel):
+            return value.model_dump(mode=cls.PYDANTIC_BASE_MODEL_DUMP_MODE)
+
+        return str(value)
 
     def format(self, record: LogRecord) -> str:
         timestamp = datetime.datetime.fromtimestamp(record.created, tz=datetime.timezone.utc).isoformat()
         process = str(record.process)
         thread = str(record.thread)
         fields = self._fields(log_record=record)
-        message = self._message(fields=fields) if record.msg is None else record.msg
+        message = self._message(record=record, fields=fields)
         json_object = {
             "name": record.name,
             "level": record.levelname,
@@ -183,4 +197,4 @@ class JsonFormatter(StdFormatter):
             fields["traceback"] = self.formatException(record.exc_info)
 
         # NOTE: use orjson because it's faster [https://github.com/ijl/orjson?tab=readme-ov-file#serialize]
-        return orjson.dumps(json_object, default=self._default).decode(ENCODING)
+        return orjson.dumps(json_object, default=self._default).decode(Utils.ENCODING)

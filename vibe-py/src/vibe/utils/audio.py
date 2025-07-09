@@ -196,6 +196,3 @@ class Audio:
         )
 
         return audio_segment
-
-    def vad_input(self) -> Annotated[Tensor, Shape("C,F")]:
-        return self.data.T.float()

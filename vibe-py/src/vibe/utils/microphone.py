@@ -1,6 +1,8 @@
+import asyncio
 import contextlib
 import dataclasses
 import functools
+from asyncio import AbstractEventLoop
 from enum import StrEnum
 from typing import AsyncIterator, ClassVar, Self
 
@@ -13,7 +15,7 @@ from vibe.utils.logger import Logger
 from vibe.utils.queue import Queue
 from vibe.utils.utils import Utils
 
-logger = Logger.new(__name__)
+logger: Logger = Logger.new(__name__)
 
 
 # TODO-959e20
@@ -61,6 +63,7 @@ class Microphone:
 
     audio_info: AudioInfo
     dtype: Dtype
+    event_loop: AbstractEventLoop
     queue: Queue[MicrophoneInput]
 
     def __aiter__(self) -> AsyncIterator[MicrophoneInput]:
@@ -77,7 +80,7 @@ class Microphone:
         # NOTE: _cffi_backend.buffer returns bytes when sliced
         microphone_input = MicrophoneInput.new(byte_str=indata[:], audio_info=self.audio_info, dtype=self.dtype)
 
-        self.queue.event_loop().call_soon_threadsafe(self.queue.append, microphone_input)
+        self.event_loop.call_soon_threadsafe(self.queue.append, microphone_input)
 
     def _raw_input_stream(self) -> RawInputStream:
         return RawInputStream(
@@ -90,9 +93,11 @@ class Microphone:
     @classmethod
     @contextlib.asynccontextmanager
     async def context(cls, *, device: int = DEFAULT_DEVICE, dtype: Dtype = DEFAULT_DTYPE) -> AsyncIterator[Self]:
-        queue = await Queue.new()
+        # NOTE-bcd471: prefer [asyncio.get_running_loop()] over [asyncio.get_event_loop] per
+        # [https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.get_event_loop]
+        queue = Queue.new()
         audio_info = AudioInfo.from_device(device=device)
-        microphone = cls(audio_info=audio_info, dtype=dtype, queue=queue)
+        microphone = cls(audio_info=audio_info, dtype=dtype, event_loop=asyncio.get_running_loop(), queue=queue)
 
         if audio_info.num_channels == 0:
             raise ValueError(cls.ZERO_INPUT_CHANNELS_ERROR_MESSAGE)

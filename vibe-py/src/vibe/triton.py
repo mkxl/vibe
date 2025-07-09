@@ -9,9 +9,9 @@ from tritonclient.http.aio import InferenceServerClient, InferInput, InferReques
 
 from vibe.utils.audio import Audio
 from vibe.utils.logger import Logger
-from vibe.utils.typing import Function
+from vibe.utils.utils import Function
 
-logger = Logger.new(__name__)
+logger: Logger = Logger.new(__name__)
 
 
 class Dtype(Enum):

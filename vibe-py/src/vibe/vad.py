@@ -1,17 +1,18 @@
 import collections
 import dataclasses
-from typing import ClassVar, Iterator, Optional, Self
+from typing import Annotated, ClassVar, Iterator, Optional, Self
 
 import silero_vad
 from silero_vad import VADIterator
+from torch import Tensor
 
 from vibe.utils.audio import Audio
 from vibe.utils.interval import Interval
 from vibe.utils.logger import Logger
 from vibe.utils.typing import JsonObject
-from vibe.utils.utils import Utils
+from vibe.utils.utils import Shape, Utils
 
-logger = Logger.new(__name__)
+logger: Logger = Logger.new(__name__)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -76,6 +77,10 @@ class Vad:
 
         return iterator
 
+    @staticmethod
+    def _vad_input(*, audio: Audio) -> Annotated[Tensor, Shape("C,F")]:
+        return audio.data.T.float()
+
     def _iter_speech_dicts_helper(self) -> Iterator[JsonObject]:
         interval_iter = Utils.iter_intervals(
             begin=self.audio_cursor, total=self.audio.num_frames(), chunk_size=self.CHUNK_NUM_FRAMES, exact=True
@@ -84,7 +89,8 @@ class Vad:
         for interval in interval_iter:
             self.audio_cursor = interval.end
             audio_chunk = self.audio.slice(begin=interval.begin, end=interval.end)
-            speech_dict = self.iterator(audio_chunk.vad_input())
+            vad_input = self._vad_input(audio=audio_chunk)
+            speech_dict = self.iterator(vad_input)
 
             if speech_dict is not None:
                 yield speech_dict
