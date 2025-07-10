@@ -69,7 +69,7 @@ class Sambanova(LanguageModel):
 
     # pylint: disable=invalid-overridden-method
     @logger.instrument()
-    async def _iter_chat_messages(self, *, conversation: Conversation) -> AsyncIterator[ChatMessage]:
+    async def _iter_response_chat_messages(self, *, conversation: Conversation) -> AsyncIterator[ChatMessage]:
         content = self._content(conversation=conversation)
         request = (
             Request.new(http=self.http, method=HTTPMethod.POST, url=self.URL)

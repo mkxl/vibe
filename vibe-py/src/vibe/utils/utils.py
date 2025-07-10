@@ -1,7 +1,7 @@
 import asyncio
 import functools
 import inspect
-from asyncio import FIRST_COMPLETED, Future
+from asyncio import FIRST_COMPLETED, Future, Task
 from typing import Any, ClassVar, Coroutine, Iterator, Optional, Union
 
 import orjson
@@ -27,6 +27,13 @@ class Utils:
             fn = cls.to_sync_fn(fn)
 
         typer.command()(fn)
+
+    @staticmethod
+    def create_task[**P, T](fn: AsyncFunction[P, T], *args: P.args, **kwargs: P.kwargs) -> Task[T]:
+        coro = fn(*args, **kwargs)
+        task = asyncio.create_task(coro)
+
+        return task
 
     # NOTE: make this an async method to ensure it's being called from an async context to ensure that
     # [asyncio.get_running_loop()] can run

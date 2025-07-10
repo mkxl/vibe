@@ -5,7 +5,6 @@ from asyncio import AbstractEventLoop, Task
 from typing import Any, AsyncIterator, ClassVar, Coroutine, Generator, Iterable, Self
 
 from vibe.utils.sink import Sink
-from vibe.utils.typing import AsyncFunction
 
 # NOTE:
 # - prefer this implementation over the hume __await__ based one because of
@@ -128,8 +127,3 @@ class TaskQueue[T]:
         task = asyncio.create_task(coro)
 
         self.task_queue.append(task)
-
-    def append_with[**P](self, fn: AsyncFunction[P, T], *args: P.args, **kwargs: P.kwargs) -> None:
-        coro = fn(*args, **kwargs)
-
-        self.append(coro)

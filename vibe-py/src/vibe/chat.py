@@ -2,13 +2,12 @@ import asyncio
 import contextlib
 import dataclasses
 from pathlib import Path
-from typing import Annotated, AsyncIterator, ClassVar, Optional, Self
+from typing import Annotated, AsyncIterator, Optional, Self
 
-import sounddevice
 from typer import Option
 
 from vibe.config import Config
-from vibe.conversation import Conversation, Role
+from vibe.conversation import ChatMessage, Conversation, Role, ToolCall
 from vibe.eleven_labs import ElevenLabs
 from vibe.language_model import LanguageModel, LanguageModelResponse
 from vibe.sambanova import Sambanova
@@ -27,14 +26,14 @@ logger: Logger = Logger.new(__name__)
 # pylint: disable=too-many-instance-attributes
 @dataclasses.dataclass(kw_only=True)
 class Chat:
-    BLOCK_ON_PLAY_AUDIO: ClassVar[bool] = False
-
     conversation: Conversation
     eleven_labs: ElevenLabs
     language_model: LanguageModel
     language_model_response_queue: Queue[LanguageModelResponse]
     microphone: Microphone
     play_audio_task_queue: TaskQueue[bytes]
+    request_chat_message_queue: Queue[ChatMessage]
+    tool_call_queue: Queue[ToolCall]
     transcription_task_queue: TaskQueue[Optional[str]]
     vad: Vad
 
@@ -60,6 +59,8 @@ class Chat:
                     language_model_response_queue=Queue.new(),
                     microphone=microphone,
                     play_audio_task_queue=TaskQueue.new(),
+                    request_chat_message_queue=Queue.new(),
+                    tool_call_queue=Queue.new(),
                     transcription_task_queue=TaskQueue.new(),
                     vad=Vad.new(),
                 )
@@ -74,64 +75,74 @@ class Chat:
 
         return (transcription, eot_detection_result)
 
-    async def _queue_transcriptions(self) -> None:
+    async def _listen_to_microphone(self) -> None:
         async for microphone_input in self.microphone.input_queue:
             for vad_result in self.vad.add(audio=microphone_input.audio):
                 # TODO: use self._transcribe_and_eot()
                 transcription_coro = Transcription(audio=vad_result.audio).result()
 
-                # NOTE-c8ddfc: call [Utils.yield_now()] bc this is a synchronous for loop
                 self.transcription_task_queue.append(transcription_coro)
 
+                # NOTE-c8ddfc: call [Utils.yield_now()] bc this is a synchronous for loop
                 await Utils.yield_now()
 
-    async def _queue_language_model_responses(self) -> None:
+    async def _queue_transcription_user_messages(self) -> None:
         async for transcription in self.transcription_task_queue:
             if Utils.is_none_or_empty(text=transcription):
                 continue
 
-            self.conversation.append(role=Role.USER, text=transcription)
+            request_chat_message = ChatMessage(role=Role.USER, content=transcription)
+
+            self.request_chat_message_queue.append(request_chat_message)
+
+    async def _prompt_language_model_and_queue_response(self) -> None:
+        async for chat_message in self.request_chat_message_queue:
+            self.conversation.append_chat_message(chat_message)
 
             language_model_response = self.language_model.respond(conversation=self.conversation)
 
             self.language_model_response_queue.append(language_model_response)
 
-    async def _process_language_model_response_text_queue(
-        self, *, language_model_response: LanguageModelResponse
-    ) -> None:
-        async for text in language_model_response.text_queue:
-            self.conversation.append(role=Role.ASSISTANT, text=text)
+    async def _process_language_model_response(self, *, language_model_response: LanguageModelResponse) -> None:
+        async for chat_message in language_model_response.chat_message_queue:
+            self.conversation.append_chat_message(chat_message)
 
-            await self.eleven_labs.asend(text)
+            if chat_message.content is not None:
+                await self.eleven_labs.asend(chat_message.content)
 
-    async def _process_language_model_response_tool_call_queue(
-        self, *, language_model_response: LanguageModelResponse
-    ) -> None:
-        async for _tool_call in language_model_response.tool_call_queue:
-            pass
+            if chat_message.tool_calls is not None:
+                self.tool_call_queue.extend(chat_message.tool_calls)
 
     async def _process_language_model_responses(self) -> None:
         async for language_model_response in self.language_model_response_queue:
-            text_coro = self._process_language_model_response_text_queue(
-                language_model_response=language_model_response
-            )
-            tool_call_coro = self._process_language_model_response_tool_call_queue(
-                language_model_response=language_model_response
-            )
+            await self._process_language_model_response(language_model_response=language_model_response)
 
-            await asyncio.gather(text_coro, tool_call_coro)
-
+            # NOTE: log conversation after processing response to ensure the response was processed correctly
             logger.info(conversation_chat_messages=self.conversation.chat_messages())
+
+    async def _process_tool_call(self, *, tool_call: ToolCall) -> str:
+        logger.info(processing_tool_call=tool_call)
+
+        return "very sunny"
+
+    async def _queue_tool_results(self) -> None:
+        async for tool_call in self.tool_call_queue:
+            content = await self._process_tool_call(tool_call=tool_call)
+            request_chat_message = ChatMessage(role=Role.TOOL, tool_call_id=tool_call.id, content=content)
+
+            self.request_chat_message_queue.append(request_chat_message)
 
     async def _play_audio(self) -> None:
         async for audio in self.eleven_labs.iter_audio():
-            sounddevice.play(data=audio.data, samplerate=audio.sample_rate, blocking=self.BLOCK_ON_PLAY_AUDIO)
+            await audio.play()
 
     async def _run(self) -> None:
         await Utils.wait(
-            self._queue_transcriptions(),
-            self._queue_language_model_responses(),
+            self._listen_to_microphone(),
+            self._queue_transcription_user_messages(),
+            self._prompt_language_model_and_queue_response(),
             self._process_language_model_responses(),
+            self._queue_tool_results(),
             self._play_audio(),
         )
 

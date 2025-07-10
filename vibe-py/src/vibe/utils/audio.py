@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 import functools
 from enum import StrEnum
@@ -67,6 +68,7 @@ class AudioInfo:
 @dataclasses.dataclass(kw_only=True)
 class Audio:
     ALWAYS_2D: ClassVar[bool] = True
+    BLOCK_ON_PLAY: ClassVar[bool] = True
     DIM_CHANNELS: ClassVar[int] = 1
     DIM_FRAMES: ClassVar[int] = 0
     SAMPLE_WIDTH_PCM_16: ClassVar[int] = 2
@@ -196,3 +198,8 @@ class Audio:
         )
 
         return audio_segment
+
+    async def play(self) -> None:
+        await asyncio.to_thread(
+            sounddevice.play, data=self.data, samplerate=self.sample_rate, blocking=self.BLOCK_ON_PLAY
+        )
