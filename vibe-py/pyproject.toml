@@ -21,6 +21,7 @@ dependencies = [
     "torchaudio>=2.7.1",
     "tritonclient[http]>=2.59.0",
     "typer>=0.16.0",
+    "websockets>=15.0.1",
 ]
 
 [project.scripts]

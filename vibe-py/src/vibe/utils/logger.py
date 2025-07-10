@@ -110,26 +110,26 @@ class Logger:
             if inspect.isgeneratorfunction(fn):
 
                 def new_fn(*args: P.args, **kwargs: P.kwargs) -> T:  # ty: ignore[invalid-return-type]
-                    with self.bookend(where=fn.__name__):
+                    with self.bookend(where=fn):
                         yield from fn(*args, **kwargs)
 
             elif inspect.iscoroutinefunction(fn):
 
                 async def new_fn(*args: P.args, **kwargs: P.kwargs) -> T:
-                    with self.bookend(where=fn.__name__):
+                    with self.bookend(where=fn):
                         return await fn(*args, **kwargs)
 
             elif inspect.isasyncgenfunction(fn):
 
                 async def new_fn(*args: P.args, **kwargs: P.kwargs) -> T:  # ty: ignore[invalid-return-type]
-                    with self.bookend(where=fn.__name__):
+                    with self.bookend(where=fn):
                         async for value in fn(*args, **kwargs):
                             yield value
 
             else:
 
                 def new_fn(*args: P.args, **kwargs: P.kwargs) -> T:
-                    with self.bookend(where=fn.__name__):
+                    with self.bookend(where=fn):
                         return fn(*args, **kwargs)
 
             return functools.wraps(fn)(new_fn)

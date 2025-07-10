@@ -2,12 +2,14 @@ import asyncio
 import contextlib
 import dataclasses
 from pathlib import Path
-from typing import Annotated, AsyncIterator, Optional, Self
+from typing import Annotated, AsyncIterator, ClassVar, Optional, Self
 
+import sounddevice
 from typer import Option
 
 from vibe.config import Config
 from vibe.conversation import Conversation, Role
+from vibe.eleven_labs import ElevenLabs
 from vibe.language_model import LanguageModel, LanguageModelResponse
 from vibe.sambanova import Sambanova
 from vibe.triton import EotDetection, EotDetectionResult, Transcription
@@ -22,12 +24,17 @@ from vibe.vad import Vad
 logger: Logger = Logger.new(__name__)
 
 
+# pylint: disable=too-many-instance-attributes
 @dataclasses.dataclass(kw_only=True)
 class Chat:
+    BLOCK_ON_PLAY_AUDIO: ClassVar[bool] = False
+
     conversation: Conversation
+    eleven_labs: ElevenLabs
     language_model: LanguageModel
-    microphone: Microphone
     language_model_response_queue: Queue[LanguageModelResponse]
+    microphone: Microphone
+    play_audio_task_queue: TaskQueue[bytes]
     transcription_task_queue: TaskQueue[Optional[str]]
     vad: Vad
 
@@ -35,12 +42,11 @@ class Chat:
     @contextlib.asynccontextmanager
     async def context(cls, *, config_filepath: Path, device: int, dtype: Dtype) -> AsyncIterator[Self]:
         config = Config.model_validate_json(config_filepath.read_text())
-        transcription_task_queue = TaskQueue.new()
-        language_model_response_queue = Queue.new()
         conversation = Conversation.new(system_prompt=config.system_prompt)
+        eleven_labs_cm = ElevenLabs.context(voice_id=config.eleven_labs_voice_id, api_key=config.eleven_labs_api_key)
 
         with Microphone.context(device=device, dtype=dtype) as microphone:
-            async with Http.context() as http:
+            async with Http.context() as http, eleven_labs_cm as eleven_labs:
                 language_model = Sambanova(
                     http=http,
                     model=config.sambanova_model,
@@ -49,10 +55,12 @@ class Chat:
                 )
                 chat = cls(
                     conversation=conversation,
+                    eleven_labs=eleven_labs,
                     language_model=language_model,
+                    language_model_response_queue=Queue.new(),
                     microphone=microphone,
-                    language_model_response_queue=language_model_response_queue,
-                    transcription_task_queue=transcription_task_queue,
+                    play_audio_task_queue=TaskQueue.new(),
+                    transcription_task_queue=TaskQueue.new(),
                     vad=Vad.new(),
                 )
 
@@ -88,25 +96,44 @@ class Chat:
 
             self.language_model_response_queue.append(language_model_response)
 
-    async def _process_language_model_text(self, *, language_model_response: LanguageModelResponse) -> None:
+    async def _process_language_model_response_text_queue(
+        self, *, language_model_response: LanguageModelResponse
+    ) -> None:
         async for text in language_model_response.text_queue:
             self.conversation.append(role=Role.ASSISTANT, text=text)
 
-    async def _process_language_model_tool_calls(self, *, language_model_response: LanguageModelResponse) -> None:
+            await self.eleven_labs.asend(text)
+
+    async def _process_language_model_response_tool_call_queue(
+        self, *, language_model_response: LanguageModelResponse
+    ) -> None:
         async for _tool_call in language_model_response.tool_call_queue:
             pass
 
-    async def _process(self) -> None:
+    async def _process_language_model_responses(self) -> None:
         async for language_model_response in self.language_model_response_queue:
-            text_coro = self._process_language_model_text(language_model_response=language_model_response)
-            tool_calls_coro = self._process_language_model_tool_calls(language_model_response=language_model_response)
+            text_coro = self._process_language_model_response_text_queue(
+                language_model_response=language_model_response
+            )
+            tool_call_coro = self._process_language_model_response_tool_call_queue(
+                language_model_response=language_model_response
+            )
 
-            await asyncio.gather(text_coro, tool_calls_coro)
+            await asyncio.gather(text_coro, tool_call_coro)
 
             logger.info(conversation_chat_messages=self.conversation.chat_messages())
 
+    async def _play_audio(self) -> None:
+        async for audio in self.eleven_labs.iter_audio():
+            sounddevice.play(data=audio.data, samplerate=audio.sample_rate, blocking=self.BLOCK_ON_PLAY_AUDIO)
+
     async def _run(self) -> None:
-        await Utils.wait(self._queue_transcriptions(), self._queue_language_model_responses(), self._process())
+        await Utils.wait(
+            self._queue_transcriptions(),
+            self._queue_language_model_responses(),
+            self._process_language_model_responses(),
+            self._play_audio(),
+        )
 
     @classmethod
     @logger.instrument()

@@ -5,6 +5,7 @@ from asyncio import AbstractEventLoop, Task
 from typing import Any, AsyncIterator, ClassVar, Coroutine, Generator, Iterable, Self
 
 from vibe.utils.sink import Sink
+from vibe.utils.typing import AsyncFunction
 
 # NOTE:
 # - prefer this implementation over the hume __await__ based one because of
@@ -55,7 +56,7 @@ from vibe.utils.sink import Sink
 #     async def aclose(self) -> None:
 #         self.is_closed = True
 
-#     def event_loop(self) -> AbstractEventLoop:
+#     def get_event_loop(self) -> AbstractEventLoop:
 #         return self.head.get_loop()
 
 
@@ -66,14 +67,11 @@ class Queue[T](Sink[T]):
 
     items: collections.deque[T]
     is_closed: bool
-    event_loop_value: AbstractEventLoop
+    event_loop: AbstractEventLoop
 
     @classmethod
     def new(cls) -> Self:
-        event_loop_value = asyncio.get_running_loop()
-        queue = cls(items=collections.deque(), is_closed=cls.INITIAL_IS_CLOSED, event_loop_value=event_loop_value)
-
-        return queue
+        return cls(items=collections.deque(), is_closed=cls.INITIAL_IS_CLOSED, event_loop=asyncio.get_running_loop())
 
     def __await__(self) -> Generator[Any, Any, T]:
         while True:
@@ -107,8 +105,8 @@ class Queue[T](Sink[T]):
     async def aclose(self) -> None:
         self.is_closed = True
 
-    def event_loop(self) -> AbstractEventLoop:
-        return self.event_loop_value
+    def get_event_loop(self) -> AbstractEventLoop:
+        return self.event_loop
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -130,3 +128,8 @@ class TaskQueue[T]:
         task = asyncio.create_task(coro)
 
         self.task_queue.append(task)
+
+    def append_with[**P](self, fn: AsyncFunction[P, T], *args: P.args, **kwargs: P.kwargs) -> None:
+        coro = fn(*args, **kwargs)
+
+        self.append(coro)

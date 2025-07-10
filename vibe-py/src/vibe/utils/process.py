@@ -4,7 +4,10 @@ from asyncio.subprocess import PIPE
 from asyncio.subprocess import Process as StdProcess
 from typing import AsyncIterator, ClassVar, Self
 
+from vibe.utils.logger import Logger
 from vibe.utils.sink import Sink
+
+logger: Logger = Logger.new(__name__)
 
 
 @dataclasses.dataclass(kw_only=True)

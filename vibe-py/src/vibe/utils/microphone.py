@@ -74,9 +74,9 @@ class Microphone:
         # NOTE: _cffi_backend.buffer returns bytes when sliced
         microphone_input = MicrophoneInput.new(byte_str=indata[:], audio_info=self.audio_info, dtype=self.dtype)
 
-        # NOTE: do this rather than [self.input_queue.event_loop().create_task(asend_coro)] to preclude the possibility
-        # of microphone inputs getting added out of order
-        self.input_queue.event_loop().call_soon_threadsafe(self.input_queue.append, microphone_input)
+        # NOTE: do this rather than [self.input_queue.get_event_loop().create_task(asend_coro)] to preclude the
+        # possibility of microphone inputs getting added out of order
+        self.input_queue.get_event_loop().call_soon_threadsafe(self.input_queue.append, microphone_input)
 
     def _raw_input_stream(self) -> RawInputStream:
         return RawInputStream(

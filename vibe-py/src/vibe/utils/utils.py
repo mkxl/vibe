@@ -5,10 +5,12 @@ from asyncio import FIRST_COMPLETED, Future
 from typing import Any, ClassVar, Coroutine, Iterator, Optional, Union
 
 import orjson
+from httpx import URL
 from typer import Typer
 
 from vibe.utils.interval import Interval
-from vibe.utils.typing import AsyncFunction, Function
+from vibe.utils.time import Duration
+from vibe.utils.typing import AsyncFunction, Function, JsonObject
 
 
 class Shape:
@@ -73,6 +75,13 @@ class Utils:
 
         return fn
 
+    @staticmethod
+    def url(*, url: str, query_params: JsonObject) -> str:
+        url_obj = URL(url, params=query_params)
+        url = str(url_obj)
+
+        return url
+
     @classmethod
     def value_error(cls, **kwargs: Any) -> ValueError:
         error_str = orjson.dumps(kwargs).decode(cls.ENCODING)
@@ -90,4 +99,4 @@ class Utils:
     # NOTE: yield points: [https://tokio.rs/blog/2020-04-preemption]
     @staticmethod
     async def yield_now() -> None:
-        await asyncio.sleep(0)
+        await Duration.new(seconds=0).sleep()

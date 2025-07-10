@@ -7,9 +7,9 @@ from typer import Option, Typer
 
 from vibe.chat import Chat
 from vibe.utils.audio import Audio, AudioFormat
-from vibe.utils.datetime import Datetime
 from vibe.utils.logger import Logger
 from vibe.utils.microphone import Dtype, Microphone
+from vibe.utils.time import Datetime
 from vibe.utils.utils import Utils
 
 logger: Logger = Logger.new(__name__)
@@ -45,7 +45,7 @@ class App:
         dtype: Annotated[Dtype, Option()] = Microphone.DEFAULT_DTYPE,
         out_dirpath: Annotated[Path, Option("--out-dir")] = Path("./"),
     ) -> None:
-        timestamp_ms = Datetime.now().timestamp_ms()
+        timestamp_ms = Datetime.now().timestamp().milliseconds()
         out_filepath = out_dirpath.joinpath(f"microphone-{timestamp_ms}.wav")
         audio_list = []
 
