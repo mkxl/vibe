@@ -2,7 +2,7 @@ import asyncio
 import functools
 import inspect
 from asyncio import FIRST_COMPLETED, Future, Task
-from typing import Any, ClassVar, Coroutine, Iterator, Optional, Union
+from typing import Any, ClassVar, Coroutine, Iterator, Optional, TypeGuard, Union
 
 import orjson
 from httpx import URL
@@ -37,21 +37,6 @@ class Utils:
 
         return task
 
-    @classmethod
-    def _json_str_default(cls, value: Any) -> Union[str, JsonObject]:
-        if isinstance(value, BaseModel):
-            return value.model_dump(mode=cls.PYDANTIC_BASE_MODEL_DUMP_MODE)
-
-        return str(value)
-
-    # NOTE: use orjson because it's faster [https://github.com/ijl/orjson?tab=readme-ov-file#serialize]
-    @classmethod
-    def json_str(cls, json_object: Optional[JsonObject] = None, **kwargs: Any) -> str:
-        json_object = kwargs if json_object is None else (json_object | kwargs)
-        json_str = orjson.dumps(json_object, default=cls._json_str_default).decode(cls.ENCODING)
-
-        return json_str
-
     # NOTE: make this an async method to ensure it's being called from an async context to ensure that
     # [asyncio.get_running_loop()] can run
     @staticmethod
@@ -85,8 +70,28 @@ class Utils:
             yield Interval[int](begin=interval_begin, end=total)
 
     @staticmethod
-    def is_none_or_empty(*, text: Optional[str]) -> bool:
-        return text is None or text == ""
+    def is_not_none_and_is_nonempty(text: Optional[str]) -> TypeGuard[str]:
+        return text is not None and text != ""
+
+    @classmethod
+    def _json_dumps_default(cls, value: Any) -> Union[str, JsonObject]:
+        if isinstance(value, BaseModel):
+            return value.model_dump(mode=cls.PYDANTIC_BASE_MODEL_DUMP_MODE)
+
+        return str(value)
+
+    # NOTE-17964d: use orjson because it's faster [https://github.com/ijl/orjson?tab=readme-ov-file#serialize]
+    @classmethod
+    def json_dumps(cls, json_object: Optional[JsonObject] = None, **kwargs: Any) -> str:
+        json_object = kwargs if json_object is None else (json_object | kwargs)
+        json_str = orjson.dumps(json_object, default=cls._json_dumps_default).decode(cls.ENCODING)
+
+        return json_str
+
+    # NOTE-17964d
+    @classmethod
+    def json_loads(cls, json_str: str) -> Any:
+        return orjson.loads(json_str)
 
     @staticmethod
     def to_sync_fn[T, **P](async_fn: AsyncFunction[P, T]) -> Function[P, T]:
@@ -108,7 +113,7 @@ class Utils:
 
     @classmethod
     def value_error(cls, **kwargs: Any) -> ValueError:
-        error_str = cls.json_str(kwargs)
+        error_str = cls.json_dumps(kwargs)
         value_error = ValueError(error_str)
 
         return value_error

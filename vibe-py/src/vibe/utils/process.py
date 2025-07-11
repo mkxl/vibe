@@ -36,7 +36,7 @@ class Process(Sink[bytes]):
 
             yield byte_str
 
-    async def run(self, *, input_byte_str: Optional[bytes]) -> str:
+    async def output(self, *, input_byte_str: Optional[bytes]) -> str:
         stdout_byte_str, _stderr_byte_str = await self.std_process.communicate(input=input_byte_str)
         stdout = stdout_byte_str.decode()
 

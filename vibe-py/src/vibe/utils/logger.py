@@ -197,4 +197,4 @@ class JsonFormatter(StdFormatter):
         if record.exc_info is not None:
             fields["traceback"] = self.formatException(record.exc_info)
 
-        return Utils.json_str(json_object)
+        return Utils.json_dumps(json_object)

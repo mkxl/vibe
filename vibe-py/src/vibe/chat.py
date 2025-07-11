@@ -2,16 +2,16 @@ import asyncio
 import contextlib
 import dataclasses
 from pathlib import Path
-from typing import Annotated, AsyncIterator, Optional, Self
+from typing import Annotated, Any, AsyncIterator, ClassVar, Optional, Self
 
 import yaml
 from typer import Option
 
 from vibe.config import Config
-from vibe.conversation import ChatMessage, Conversation, Role, ToolCall
+from vibe.conversation import Conversation
 from vibe.eleven_labs import ElevenLabs
-from vibe.functions import ConstantImplementation, Implementation, ProcessImplementation, Tool
 from vibe.language_model import LanguageModel, LanguageModelResponse
+from vibe.models import ChatMessage, ConstantImplementation, Implementation, ProcessImplementation, Role, Tool, ToolCall
 from vibe.sambanova import Sambanova
 from vibe.triton import EotDetection, EotDetectionResult, Transcription
 from vibe.utils.audio import Audio
@@ -29,6 +29,9 @@ logger: Logger = Logger.new(__name__)
 # pylint: disable=too-many-instance-attributes
 @dataclasses.dataclass(kw_only=True)
 class Chat:
+    # NOTE: [https://platform.openai.com/docs/guides/function-calling#formatting-results]
+    TOOL_CALL_RESULT_CONTENT_FOR_SUCCESS: ClassVar[str] = "success"
+
     config: Config
     conversation: Conversation
     eleven_labs: ElevenLabs
@@ -36,6 +39,7 @@ class Chat:
     language_model: LanguageModel
     language_model_response_queue: Queue[LanguageModelResponse]
     microphone: Microphone
+    misc_task_queue: TaskQueue[Any]
     request_chat_message_task_queue: TaskQueue[Optional[ChatMessage]]
     tool_call_queue: Queue[ToolCall]
     vad: Vad
@@ -65,6 +69,7 @@ class Chat:
                     language_model=language_model,
                     language_model_response_queue=Queue.new(),
                     microphone=microphone,
+                    misc_task_queue=TaskQueue.new(),
                     request_chat_message_task_queue=TaskQueue.new(),
                     tool_call_queue=Queue.new(),
                     vad=Vad.new(),
@@ -73,8 +78,8 @@ class Chat:
                 yield chat
 
     @staticmethod
-    def _implementations(*, tools: list[Tool]) -> dict[str, Implementation]:
-        return {tool.function.name: tool.function.implementation for tool in tools}
+    def _implementations(*, tools: Optional[list[Tool]]) -> dict[str, Implementation]:
+        return {} if tools is None else {tool.function.name: tool.function.implementation for tool in tools}
 
     @classmethod
     async def _transcribe_and_eot(cls, *, audio: Audio, user_last: bool) -> tuple[Optional[str], EotDetectionResult]:
@@ -87,7 +92,9 @@ class Chat:
     async def _transcribe(self, *, audio: Audio) -> Optional[ChatMessage]:
         transcription = await Transcription(audio=audio).result()
         chat_message = (
-            None if Utils.is_none_or_empty(text=transcription) else ChatMessage(role=Role.USER, content=transcription)
+            ChatMessage(role=Role.USER, content=transcription)
+            if Utils.is_not_none_and_is_nonempty(transcription)
+            else None
         )
 
         return chat_message
@@ -114,13 +121,21 @@ class Chat:
 
     async def _process_language_model_response(self, *, language_model_response: LanguageModelResponse) -> None:
         async for chat_message in language_model_response.chat_message_queue:
-            self.conversation.append_chat_message(chat_message)
+            # NOTE: sometimes we receive chat messages that have a content of "" and a tool_calls value of []
+            should_append_chat_message = False
 
-            if chat_message.content is not None:
+            if Utils.is_not_none_and_is_nonempty(chat_message.content):
                 await self.eleven_labs.asend(chat_message.content)
+
+                should_append_chat_message = True
 
             if chat_message.tool_calls is not None:
                 self.tool_call_queue.extend(chat_message.tool_calls)
+
+                should_append_chat_message = True
+
+            if should_append_chat_message:
+                self.conversation.append_chat_message(chat_message)
 
     async def _process_language_model_responses(self) -> None:
         async for language_model_response in self.language_model_response_queue:
@@ -129,21 +144,49 @@ class Chat:
             # NOTE: log conversation after processing response to ensure the response was processed correctly
             logger.info(conversation_chat_messages=self.conversation.chat_messages())
 
-    async def _tool_call_response(self, *, tool_call: ToolCall) -> str:
+    async def _tool_call_result_content_for_process(
+        self, *, process: Process, input_byte_str: Optional[bytes], wait: bool
+    ) -> str:
+        output_task = self.misc_task_queue.create_task(process.output, input_byte_str=input_byte_str)
+
+        if wait:
+            tool_call_result_content = await output_task
+
+            if tool_call_result_content == "":
+                tool_call_result_content = self.TOOL_CALL_RESULT_CONTENT_FOR_SUCCESS
+        else:
+            tool_call_result_content = self.TOOL_CALL_RESULT_CONTENT_FOR_SUCCESS
+
+        return tool_call_result_content
+
+    async def _tool_call_result_content(self, *, tool_call: ToolCall) -> str:
         match self.implementations.get(tool_call.function.name):
-            case ConstantImplementation() as constant_fn:
-                content = constant_fn.value
-            case ProcessImplementation() as process_fn:
-                process = await Process.new(process_fn.command, *process_fn.args)
-                content = await process.run(input_byte_str=None)
+            case ConstantImplementation() as constant_implementation:
+                tool_call_result_content = constant_implementation.value
+            case ProcessImplementation() as process_implementation:
+                process = await Process.new(process_implementation.command, *process_implementation.args)
+                input_byte_str = process_implementation.input_byte_str(tool_call=tool_call)
+                tool_call_result_content = await self._tool_call_result_content_for_process(
+                    process=process, input_byte_str=input_byte_str, wait=process_implementation.wait
+                )
+
+                logger.info(
+                    command=process_implementation.command,
+                    args=process_implementation.args,
+                    input_byte_str=input_byte_str,
+                    tool_call_result_content=tool_call_result_content,
+                )
             case unknown_tool_call_handler:
                 raise Utils.value_error(unknown_tool_call_handler=unknown_tool_call_handler, tool_call=tool_call)
 
-        return content
+        return tool_call_result_content
 
     async def _process_tool_call(self, *, tool_call: ToolCall) -> ChatMessage:
-        content = await self._tool_call_response(tool_call=tool_call)
+        content = await self._tool_call_result_content(tool_call=tool_call)
         chat_message = ChatMessage(role=Role.TOOL, tool_call_id=tool_call.id, content=content)
+
+        # TODO: remove
+        logger.info(tool_call_request=tool_call, tool_call_response=chat_message)
 
         return chat_message
 

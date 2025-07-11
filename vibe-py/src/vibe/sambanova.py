@@ -5,9 +5,9 @@ from typing import AsyncIterator, ClassVar, Optional
 import pydantic
 from pydantic import BaseModel
 
-from vibe.conversation import ChatMessage, Conversation
-from vibe.functions import Tool
+from vibe.conversation import Conversation
 from vibe.language_model import LanguageModel
+from vibe.models import ChatMessage, Tool
 from vibe.utils.http import Http, Request
 from vibe.utils.logger import Logger
 
@@ -24,11 +24,6 @@ class SambanovaRequest(BaseModel):
     def stream(self) -> bool:
         return True
 
-    # NOTE-f94e7d
-    @pydantic.computed_field
-    def tool_choice(self) -> str:
-        return "auto"
-
 
 class SambanovaResponseChunkChoice(BaseModel):
     delta: ChatMessage
@@ -40,6 +35,7 @@ class SambanovaResponseChunk(BaseModel):
 
 @dataclasses.dataclass(kw_only=True)
 class Sambanova(LanguageModel):
+    EXCLUDE_NONE_ON_MODEL_DUMP: ClassVar[bool] = True
     URL: ClassVar[str] = "https://api.sambanova.ai/v1/chat/completions"
 
     http: Http
@@ -49,7 +45,7 @@ class Sambanova(LanguageModel):
 
     def _content(self, *, conversation: Conversation) -> str:
         sambanova_request = SambanovaRequest(model=self.model, messages=conversation.chat_messages(), tools=self.tools)
-        content = sambanova_request.model_dump_json()
+        content = sambanova_request.model_dump_json(exclude_none=self.EXCLUDE_NONE_ON_MODEL_DUMP)
 
         logger.info(sambanova_request=sambanova_request)
 

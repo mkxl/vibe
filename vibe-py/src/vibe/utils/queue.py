@@ -128,7 +128,9 @@ class TaskQueue[T]:
         async for task in self.task_queue:
             yield await task
 
-    def create_task[**P](self, fn: AsyncFunction[P, T], *args: P.args, **kwargs: P.kwargs) -> None:
+    def create_task[**P](self, fn: AsyncFunction[P, T], *args: P.args, **kwargs: P.kwargs) -> Task[T]:
         task = Utils.create_task(fn, *args, **kwargs)
 
         self.task_queue.append(task)
+
+        return task

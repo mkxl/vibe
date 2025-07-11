@@ -1,47 +1,24 @@
 import dataclasses
-from enum import StrEnum
 from typing import Optional, Self
 
-from pydantic import BaseModel
-
-
-class Role(StrEnum):
-    SYSTEM = "system"
-    USER = "user"
-    ASSISTANT = "assistant"
-    TOOL = "tool"
-
-
-class Function(BaseModel):
-    name: str
-    arguments: str
-
-
-class ToolCall(BaseModel):
-    function: Function
-    id: str
-
-
-# NOTE-e71aa5: use [= <default>] for pydantic fields bc of [ty]
-class ChatMessage(BaseModel):
-    role: Role
-    content: Optional[str]
-    tool_call_id: Optional[str] = None
-    tool_calls: Optional[list[ToolCall]] = None
-
-    def is_tool_call(self) -> bool:
-        return self.tool_calls is not None
+from vibe.models import ChatMessage, Role
 
 
 @dataclasses.dataclass(kw_only=True)
 class Turn:
     role: Role
     chat_messages: list[ChatMessage]
+    tool_call_id: Optional[str]
     is_tool_call: bool
 
     @classmethod
     def new(cls, *, role: Role, chat_message: ChatMessage) -> Self:
-        return cls(role=role, chat_messages=[chat_message], is_tool_call=chat_message.is_tool_call())
+        return cls(
+            role=role,
+            chat_messages=[chat_message],
+            tool_call_id=chat_message.tool_call_id,
+            is_tool_call=chat_message.is_tool_call(),
+        )
 
     def append_chat_message(self, chat_message: ChatMessage) -> None:
         self.chat_messages.append(chat_message)
@@ -59,7 +36,7 @@ class Turn:
             )
             tool_calls = None
 
-        return ChatMessage(role=self.role, content=content, tool_calls=tool_calls)
+        return ChatMessage(role=self.role, content=content, tool_call_id=self.tool_call_id, tool_calls=tool_calls)
 
 
 @dataclasses.dataclass(kw_only=True)
