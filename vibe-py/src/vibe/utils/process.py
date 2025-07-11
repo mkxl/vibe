@@ -2,7 +2,7 @@ import asyncio
 import dataclasses
 from asyncio.subprocess import PIPE
 from asyncio.subprocess import Process as StdProcess
-from typing import AsyncIterator, ClassVar, Self
+from typing import AsyncIterator, ClassVar, Optional, Self
 
 from vibe.utils.logger import Logger
 from vibe.utils.sink import Sink
@@ -17,9 +17,9 @@ class Process(Sink[bytes]):
     std_process: StdProcess
 
     @classmethod
-    async def new(cls, program: str, *args: str) -> Self:
+    async def new(cls, command: str, *args: str) -> Self:
         std_process = await asyncio.create_subprocess_exec(
-            program, *args, limit=cls.READ_SIZE, stdin=PIPE, stdout=PIPE, stderr=PIPE
+            command, *args, limit=cls.READ_SIZE, stdin=PIPE, stdout=PIPE, stderr=PIPE
         )
         process = cls(std_process=std_process)
 
@@ -35,6 +35,12 @@ class Process(Sink[bytes]):
                 break
 
             yield byte_str
+
+    async def run(self, *, input_byte_str: Optional[bytes]) -> str:
+        stdout_byte_str, _stderr_byte_str = await self.std_process.communicate(input=input_byte_str)
+        stdout = stdout_byte_str.decode()
+
+        return stdout
 
     async def asend(self, value: bytes) -> None:
         # NOTE: [self.std_process.stdin.write()] and [self.std_process.stdin.drain()] should be called together per

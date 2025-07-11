@@ -2,9 +2,11 @@ import asyncio
 import collections
 import dataclasses
 from asyncio import AbstractEventLoop, Task
-from typing import Any, AsyncIterator, ClassVar, Coroutine, Generator, Iterable, Self
+from typing import Any, AsyncIterator, ClassVar, Generator, Iterable, Self
 
 from vibe.utils.sink import Sink
+from vibe.utils.typing import AsyncFunction
+from vibe.utils.utils import Utils
 
 # NOTE:
 # - prefer this implementation over the hume __await__ based one because of
@@ -108,6 +110,9 @@ class Queue[T](Sink[T]):
         return self.event_loop
 
 
+# NOTE:
+# - all created tasks are run simultaneously (as a result of calling [asyncio.create_Task])
+# - but they're yielded in the order added
 @dataclasses.dataclass(kw_only=True)
 class TaskQueue[T]:
     task_queue: Queue[Task[T]]
@@ -123,7 +128,7 @@ class TaskQueue[T]:
         async for task in self.task_queue:
             yield await task
 
-    def append(self, coro: Coroutine[Any, Any, T]) -> None:
-        task = asyncio.create_task(coro)
+    def create_task[**P](self, fn: AsyncFunction[P, T], *args: P.args, **kwargs: P.kwargs) -> None:
+        task = Utils.create_task(fn, *args, **kwargs)
 
         self.task_queue.append(task)

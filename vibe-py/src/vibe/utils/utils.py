@@ -6,6 +6,7 @@ from typing import Any, ClassVar, Coroutine, Iterator, Optional, Union
 
 import orjson
 from httpx import URL
+from pydantic import BaseModel
 from typer import Typer
 
 from vibe.utils.interval import Interval
@@ -20,6 +21,7 @@ class Shape:
 
 class Utils:
     ENCODING: ClassVar[str] = "utf-8"
+    PYDANTIC_BASE_MODEL_DUMP_MODE: ClassVar[str] = "json"
 
     @classmethod
     def add_typer_command(cls, *, typer: Typer, fn: Union[Function[Any, Any], AsyncFunction[Any, Any]]) -> None:
@@ -34,6 +36,21 @@ class Utils:
         task = asyncio.create_task(coro)
 
         return task
+
+    @classmethod
+    def _json_str_default(cls, value: Any) -> Union[str, JsonObject]:
+        if isinstance(value, BaseModel):
+            return value.model_dump(mode=cls.PYDANTIC_BASE_MODEL_DUMP_MODE)
+
+        return str(value)
+
+    # NOTE: use orjson because it's faster [https://github.com/ijl/orjson?tab=readme-ov-file#serialize]
+    @classmethod
+    def json_str(cls, json_object: Optional[JsonObject] = None, **kwargs: Any) -> str:
+        json_object = kwargs if json_object is None else (json_object | kwargs)
+        json_str = orjson.dumps(json_object, default=cls._json_str_default).decode(cls.ENCODING)
+
+        return json_str
 
     # NOTE: make this an async method to ensure it's being called from an async context to ensure that
     # [asyncio.get_running_loop()] can run
@@ -91,7 +108,7 @@ class Utils:
 
     @classmethod
     def value_error(cls, **kwargs: Any) -> ValueError:
-        error_str = orjson.dumps(kwargs).decode(cls.ENCODING)
+        error_str = cls.json_str(kwargs)
         value_error = ValueError(error_str)
 
         return value_error

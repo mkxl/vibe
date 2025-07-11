@@ -10,10 +10,7 @@ from enum import StrEnum
 from logging import Formatter as StdFormatter
 from logging import Logger as StdLogger
 from logging import LogRecord, StreamHandler
-from typing import Any, Callable, ClassVar, Iterator, Optional, Self, Union
-
-import orjson
-from pydantic import BaseModel
+from typing import Any, Callable, ClassVar, Iterator, Optional, Self
 
 from vibe.utils.typing import AnyFunction, JsonObject
 from vibe.utils.utils import Utils
@@ -153,8 +150,6 @@ class Logger:
 
 
 class JsonFormatter(StdFormatter):
-    PYDANTIC_BASE_MODEL_DUMP_MODE: ClassVar[str] = "json"
-
     def __init__(self, *, include_spans: bool, populate_message: bool):
         super().__init__()
 
@@ -183,13 +178,6 @@ class JsonFormatter(StdFormatter):
 
         return None
 
-    @classmethod
-    def _default(cls, value: Any) -> Union[str, JsonObject]:
-        if isinstance(value, BaseModel):
-            return value.model_dump(mode=cls.PYDANTIC_BASE_MODEL_DUMP_MODE)
-
-        return str(value)
-
     def format(self, record: LogRecord) -> str:
         timestamp = datetime.datetime.fromtimestamp(record.created, tz=datetime.timezone.utc).isoformat()
         process = str(record.process)
@@ -209,5 +197,4 @@ class JsonFormatter(StdFormatter):
         if record.exc_info is not None:
             fields["traceback"] = self.formatException(record.exc_info)
 
-        # NOTE: use orjson because it's faster [https://github.com/ijl/orjson?tab=readme-ov-file#serialize]
-        return orjson.dumps(json_object, default=self._default).decode(Utils.ENCODING)
+        return Utils.json_str(json_object)

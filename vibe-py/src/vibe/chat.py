@@ -4,11 +4,13 @@ import dataclasses
 from pathlib import Path
 from typing import Annotated, AsyncIterator, Optional, Self
 
+import yaml
 from typer import Option
 
 from vibe.config import Config
 from vibe.conversation import ChatMessage, Conversation, Role, ToolCall
 from vibe.eleven_labs import ElevenLabs
+from vibe.functions import ConstantImplementation, Implementation, ProcessImplementation, Tool
 from vibe.language_model import LanguageModel, LanguageModelResponse
 from vibe.sambanova import Sambanova
 from vibe.triton import EotDetection, EotDetectionResult, Transcription
@@ -16,6 +18,7 @@ from vibe.utils.audio import Audio
 from vibe.utils.http import Http
 from vibe.utils.logger import Logger
 from vibe.utils.microphone import Dtype, Microphone
+from vibe.utils.process import Process
 from vibe.utils.queue import Queue, TaskQueue
 from vibe.utils.utils import Utils
 from vibe.vad import Vad
@@ -26,23 +29,25 @@ logger: Logger = Logger.new(__name__)
 # pylint: disable=too-many-instance-attributes
 @dataclasses.dataclass(kw_only=True)
 class Chat:
+    config: Config
     conversation: Conversation
     eleven_labs: ElevenLabs
+    implementations: dict[str, Implementation]
     language_model: LanguageModel
     language_model_response_queue: Queue[LanguageModelResponse]
     microphone: Microphone
-    play_audio_task_queue: TaskQueue[bytes]
-    request_chat_message_queue: Queue[ChatMessage]
+    request_chat_message_task_queue: TaskQueue[Optional[ChatMessage]]
     tool_call_queue: Queue[ToolCall]
-    transcription_task_queue: TaskQueue[Optional[str]]
     vad: Vad
 
     @classmethod
     @contextlib.asynccontextmanager
     async def context(cls, *, config_filepath: Path, device: int, dtype: Dtype) -> AsyncIterator[Self]:
-        config = Config.model_validate_json(config_filepath.read_text())
+        config_json_obj = yaml.safe_load(config_filepath.read_text())
+        config = Config.model_validate(config_json_obj)
         conversation = Conversation.new(system_prompt=config.system_prompt)
         eleven_labs_cm = ElevenLabs.context(voice_id=config.eleven_labs_voice_id, api_key=config.eleven_labs_api_key)
+        implementations = cls._implementations(tools=config.tools)
 
         with Microphone.context(device=device, dtype=dtype) as microphone:
             async with Http.context() as http, eleven_labs_cm as eleven_labs:
@@ -50,22 +55,26 @@ class Chat:
                     http=http,
                     model=config.sambanova_model,
                     api_key=config.sambanova_api_key,
-                    tools=config.sambanova_tools,
+                    tools=config.tools,
                 )
                 chat = cls(
+                    config=config,
                     conversation=conversation,
                     eleven_labs=eleven_labs,
+                    implementations=implementations,
                     language_model=language_model,
                     language_model_response_queue=Queue.new(),
                     microphone=microphone,
-                    play_audio_task_queue=TaskQueue.new(),
-                    request_chat_message_queue=Queue.new(),
+                    request_chat_message_task_queue=TaskQueue.new(),
                     tool_call_queue=Queue.new(),
-                    transcription_task_queue=TaskQueue.new(),
                     vad=Vad.new(),
                 )
 
                 yield chat
+
+    @staticmethod
+    def _implementations(*, tools: list[Tool]) -> dict[str, Implementation]:
+        return {tool.function.name: tool.function.implementation for tool in tools}
 
     @classmethod
     async def _transcribe_and_eot(cls, *, audio: Audio, user_last: bool) -> tuple[Optional[str], EotDetectionResult]:
@@ -75,28 +84,28 @@ class Chat:
 
         return (transcription, eot_detection_result)
 
-    async def _listen_to_microphone(self) -> None:
+    async def _transcribe(self, *, audio: Audio) -> Optional[ChatMessage]:
+        transcription = await Transcription(audio=audio).result()
+        chat_message = (
+            None if Utils.is_none_or_empty(text=transcription) else ChatMessage(role=Role.USER, content=transcription)
+        )
+
+        return chat_message
+
+    async def _queue_transcribed_user_messages(self) -> None:
         async for microphone_input in self.microphone.input_queue:
             for vad_result in self.vad.add(audio=microphone_input.audio):
-                # TODO: use self._transcribe_and_eot()
-                transcription_coro = Transcription(audio=vad_result.audio).result()
-
-                self.transcription_task_queue.append(transcription_coro)
+                # TODO: use [self._transcribe_and_eot()]
+                self.request_chat_message_task_queue.create_task(self._transcribe, audio=vad_result.audio)
 
                 # NOTE-c8ddfc: call [Utils.yield_now()] bc this is a synchronous for loop
                 await Utils.yield_now()
 
-    async def _queue_transcription_user_messages(self) -> None:
-        async for transcription in self.transcription_task_queue:
-            if Utils.is_none_or_empty(text=transcription):
+    async def _prompt_language_model_and_queue_response(self) -> None:
+        async for chat_message in self.request_chat_message_task_queue:
+            if chat_message is None:
                 continue
 
-            request_chat_message = ChatMessage(role=Role.USER, content=transcription)
-
-            self.request_chat_message_queue.append(request_chat_message)
-
-    async def _prompt_language_model_and_queue_response(self) -> None:
-        async for chat_message in self.request_chat_message_queue:
             self.conversation.append_chat_message(chat_message)
 
             language_model_response = self.language_model.respond(conversation=self.conversation)
@@ -120,17 +129,27 @@ class Chat:
             # NOTE: log conversation after processing response to ensure the response was processed correctly
             logger.info(conversation_chat_messages=self.conversation.chat_messages())
 
-    async def _process_tool_call(self, *, tool_call: ToolCall) -> str:
-        logger.info(processing_tool_call=tool_call)
+    async def _tool_call_response(self, *, tool_call: ToolCall) -> str:
+        match self.implementations.get(tool_call.function.name):
+            case ConstantImplementation() as constant_fn:
+                content = constant_fn.value
+            case ProcessImplementation() as process_fn:
+                process = await Process.new(process_fn.command, *process_fn.args)
+                content = await process.run(input_byte_str=None)
+            case unknown_tool_call_handler:
+                raise Utils.value_error(unknown_tool_call_handler=unknown_tool_call_handler, tool_call=tool_call)
 
-        return "very sunny"
+        return content
+
+    async def _process_tool_call(self, *, tool_call: ToolCall) -> ChatMessage:
+        content = await self._tool_call_response(tool_call=tool_call)
+        chat_message = ChatMessage(role=Role.TOOL, tool_call_id=tool_call.id, content=content)
+
+        return chat_message
 
     async def _queue_tool_results(self) -> None:
         async for tool_call in self.tool_call_queue:
-            content = await self._process_tool_call(tool_call=tool_call)
-            request_chat_message = ChatMessage(role=Role.TOOL, tool_call_id=tool_call.id, content=content)
-
-            self.request_chat_message_queue.append(request_chat_message)
+            self.request_chat_message_task_queue.create_task(self._process_tool_call, tool_call=tool_call)
 
     async def _play_audio(self) -> None:
         async for audio in self.eleven_labs.iter_audio():
@@ -138,8 +157,7 @@ class Chat:
 
     async def _run(self) -> None:
         await Utils.wait(
-            self._listen_to_microphone(),
-            self._queue_transcription_user_messages(),
+            self._queue_transcribed_user_messages(),
             self._prompt_language_model_and_queue_response(),
             self._process_language_model_responses(),
             self._queue_tool_results(),

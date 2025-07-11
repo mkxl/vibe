@@ -6,31 +6,20 @@ import pydantic
 from pydantic import BaseModel
 
 from vibe.conversation import ChatMessage, Conversation
+from vibe.functions import Tool
 from vibe.language_model import LanguageModel
 from vibe.utils.http import Http, Request
 from vibe.utils.logger import Logger
-from vibe.utils.typing import JsonObject
 
 logger: Logger = Logger.new(__name__)
-
-
-class SambanovaFunction(BaseModel):
-    name: str
-    description: str
-    parameters: JsonObject
-
-
-class SambanovaTool(BaseModel):
-    type: str
-    function: SambanovaFunction
 
 
 class SambanovaRequest(BaseModel):
     model: str
     messages: list[ChatMessage]
-    tools: Optional[list[SambanovaTool]]
+    tools: Optional[list[Tool]]
 
-    # NOTE-f94e7d: figure out a way to have this be a class var and still be rendered
+    # NOTE-f94e7d: figure out a way to have this be a class var and still be serialized
     @pydantic.computed_field
     def stream(self) -> bool:
         return True
@@ -49,7 +38,6 @@ class SambanovaResponseChunk(BaseModel):
     choices: list[SambanovaResponseChunkChoice]
 
 
-# TODO: figure out model choice, llama won't respond unless it's given a user message relating to the supplied tools
 @dataclasses.dataclass(kw_only=True)
 class Sambanova(LanguageModel):
     URL: ClassVar[str] = "https://api.sambanova.ai/v1/chat/completions"
@@ -57,7 +45,7 @@ class Sambanova(LanguageModel):
     http: Http
     api_key: str
     model: str
-    tools: Optional[list[SambanovaTool]]
+    tools: Optional[list[Tool]]
 
     def _content(self, *, conversation: Conversation) -> str:
         sambanova_request = SambanovaRequest(model=self.model, messages=conversation.chat_messages(), tools=self.tools)
