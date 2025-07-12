@@ -1,10 +1,14 @@
 import asyncio
+import contextlib
 import functools
 import inspect
 from asyncio import FIRST_COMPLETED, Future, Task
-from typing import Any, ClassVar, Coroutine, Iterator, Optional, TypeGuard, Union
+from contextlib import AbstractContextManager
+from pathlib import Path
+from typing import Any, Callable, ClassVar, Coroutine, Iterator, Optional, TypeGuard, Union
 
 import orjson
+import yaml
 from httpx import URL
 from pydantic import BaseModel
 from typer import Typer
@@ -20,6 +24,7 @@ class Shape:
 
 
 class Utils:
+    DOCUMENTS_DIRNAME: ClassVar[str] = "docs"
     ENCODING: ClassVar[str] = "utf-8"
     PYDANTIC_BASE_MODEL_DUMP_MODE: ClassVar[str] = "json"
 
@@ -29,6 +34,18 @@ class Utils:
             fn = cls.to_sync_fn(fn)
 
         typer.command()(fn)
+
+    @classmethod
+    @contextlib.contextmanager
+    def context_map[T, S: AbstractContextManager](
+        cls, *, value: Optional[S], fn: Optional[Callable[[S], T]]
+    ) -> Iterator[Optional[Union[S, T]]]:
+        if value is None:
+            yield None
+        elif fn is None:
+            yield value
+        else:
+            yield fn(value)
 
     @staticmethod
     def create_task[**P, T](fn: AsyncFunction[P, T], *args: P.args, **kwargs: P.kwargs) -> Task[T]:
@@ -82,9 +99,9 @@ class Utils:
 
     # NOTE-17964d: use orjson because it's faster [https://github.com/ijl/orjson?tab=readme-ov-file#serialize]
     @classmethod
-    def json_dumps(cls, json_object: Optional[JsonObject] = None, **kwargs: Any) -> str:
-        json_object = kwargs if json_object is None else (json_object | kwargs)
-        json_str = orjson.dumps(json_object, default=cls._json_dumps_default).decode(cls.ENCODING)
+    def json_dumps(cls, json_obj: Optional[JsonObject] = None, **kwargs: Any) -> str:
+        json_obj = kwargs if json_obj is None else (json_obj | kwargs)
+        json_str = orjson.dumps(json_obj, default=cls._json_dumps_default).decode(cls.ENCODING)
 
         return json_str
 
@@ -92,6 +109,17 @@ class Utils:
     @classmethod
     def json_loads(cls, json_str: str) -> Any:
         return orjson.loads(json_str)
+
+    @staticmethod
+    def model_validate_yaml[S: BaseModel](yaml_str: str, *, base_model_type: type[S]) -> S:
+        json_obj = yaml.safe_load(yaml_str)
+        base_model = base_model_type.model_validate(json_obj)
+
+        return base_model
+
+    @classmethod
+    def read_document(cls, filename: str) -> str:
+        return Path(__file__).parent.parent.joinpath(cls.DOCUMENTS_DIRNAME, filename).read_text(encoding=cls.ENCODING)
 
     @staticmethod
     def to_sync_fn[T, **P](async_fn: AsyncFunction[P, T]) -> Function[P, T]:

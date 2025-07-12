@@ -9,7 +9,7 @@ from vibe.conversation import Conversation
 from vibe.language_model import LanguageModel
 from vibe.models import ChatMessage, Tool
 from vibe.utils.http import Http, Request
-from vibe.utils.logger import Logger
+from vibe.utils.logger import Level, Logger
 
 logger: Logger = Logger.new(__name__)
 
@@ -47,12 +47,12 @@ class Sambanova(LanguageModel):
         sambanova_request = SambanovaRequest(model=self.model, messages=conversation.chat_messages(), tools=self.tools)
         content = sambanova_request.model_dump_json(exclude_none=self.EXCLUDE_NONE_ON_MODEL_DUMP)
 
-        logger.info(sambanova_request=sambanova_request)
+        logger.debug(sambanova_request=sambanova_request)
 
         return content
 
     # pylint: disable=invalid-overridden-method
-    @logger.instrument()
+    @logger.instrument(level=Level.DEBUG)
     async def _iter_response_chat_messages(self, *, conversation: Conversation) -> AsyncIterator[ChatMessage]:
         content = self._content(conversation=conversation)
         request = (

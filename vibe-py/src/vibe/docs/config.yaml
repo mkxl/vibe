@@ -1,0 +1,74 @@
+eleven_labs_voice_id: ThT5KcBeYPX3keUQqHPh
+sambanova_model: Meta-Llama-3.1-405B-Instruct
+system_prompt: >
+  You are a helpful, yet extremely concise assistant.
+
+  If the user makes a request that cannot be addressed with a function call,
+  respond conversationally to the best of your ability in a way that addresses
+  their request, but without acknowledging the failed function call.
+
+  If the result of a function call is just the string `"success"`, do not
+  reply. Otherwise, respond conversationally, taking into accout the value of
+  the result.
+tools:
+  - type: function
+    function:
+      name: get_weather
+      description: Gets the current weather information for a given city.
+      parameters:
+        type: object
+        properties:
+          city:
+            type: string
+            description: Name of the city to get weather information for.
+        required:
+          - city
+      implementation:
+        type: constant
+        value: very sunny
+  - type: function
+    function:
+      name: open_new_sublime_window
+      description: Opens a new window of the text editor Sublime Text.
+      parameters:
+        type: object
+        properties:
+          new_content:
+            type: string
+            description: >
+              The content to open Sublime Text with. Leave as an empty string
+              "" if content is not explicitly supplied by the user.
+      implementation:
+        type: process
+        input_field_name: new_content
+        command: subl
+        args:
+          - -n
+        # TODO: figure out how to get sublime to not wait when opening from
+        # stdin see [subl --help]
+        wait: false
+  - type: function
+    function:
+      name: read_from_clipboard
+      description: Reads the content from the clipboard.
+      implementation:
+        type: process
+        command: pbpaste
+        wait: true
+  - type: function
+    function:
+      name: write_to_clipboard
+      description: Writes new content to the clipboard.
+      parameters:
+        type: object
+        properties:
+          new_content:
+            type: string
+            description: The new content of the clipboard.
+        required:
+          - new_content
+      implementation:
+        type: process
+        input_field_name: new_content
+        command: pbcopy
+        wait: true

@@ -23,8 +23,6 @@ class App:
     def cli(cls) -> None:
         typer = Typer(pretty_exceptions_enable=cls.PRETTY_EXCEPTIONS_ENABLE)
 
-        Logger.init()
-
         Utils.add_typer_command(typer=typer, fn=cls.devices)
         Utils.add_typer_command(typer=typer, fn=cls.record)
         Utils.add_typer_command(typer=typer, fn=Chat.chat)
@@ -45,6 +43,8 @@ class App:
         dtype: Annotated[Dtype, Option()] = Microphone.DEFAULT_DTYPE,
         out_dirpath: Annotated[Path, Option("--out-dir")] = Path("./"),
     ) -> None:
+        Logger.init()
+
         timestamp_ms = Datetime.now().timestamp().milliseconds()
         out_filepath = out_dirpath.joinpath(f"microphone-{timestamp_ms}.wav")
         audio_list = []

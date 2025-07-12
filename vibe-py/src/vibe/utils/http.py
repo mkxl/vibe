@@ -17,7 +17,7 @@ class Http:
 
     @classmethod
     @contextlib.asynccontextmanager
-    async def context(cls) -> AsyncIterator[Self]:
+    async def acontext(cls) -> AsyncIterator[Self]:
         async with AsyncClient() as client:
             yield cls(client=client)
 

@@ -7,6 +7,7 @@ import websockets.asyncio.client
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from websockets.asyncio.client import ClientConnection
 
+from vibe.tts import Tts
 from vibe.utils.audio import Audio, AudioFormat, AudioInfo
 from vibe.utils.logger import Logger
 from vibe.utils.typing import JsonObject
@@ -41,7 +42,7 @@ class FinalOutput(BaseModel):
 
 
 @dataclasses.dataclass(kw_only=True)
-class ElevenLabs:
+class ElevenLabs(Tts):
     AUDIO_FORMAT: ClassVar[Optional[AudioFormat]] = AudioFormat.PCM_16
     AUDIO_INFO: ClassVar[Optional[AudioInfo]] = AudioInfo(sample_rate=16_000, num_channels=1)
     HEADER_NAME_API_KEY: ClassVar[str] = "xi-api-key"
@@ -60,7 +61,7 @@ class ElevenLabs:
 
     @classmethod
     @contextlib.asynccontextmanager
-    async def context(cls, *, voice_id: str, api_key: str) -> AsyncIterator[Self]:
+    async def acontext(cls, *, voice_id: str, api_key: str) -> AsyncIterator[Self]:
         uri = cls._uri(voice_id=voice_id)
         additional_headers = cls._additional_headers(api_key=api_key)
         websocket_cm = websockets.asyncio.client.connect(
@@ -115,12 +116,13 @@ class ElevenLabs:
                 case AudioOutput() as audio_output:
                     yield audio_output.as_bytes()
                 case FinalOutput() as final_output:
-                    logger.info(final_output=final_output)
+                    logger.debug(final_output=final_output)
 
                     break
                 case unknown_message:
                     logger.warning(unknown_message=unknown_message)
 
+    # pylint: disable=invalid-overridden-method
     async def iter_audio(self) -> AsyncIterator[Audio]:
         async for audio_byte_str in self.iter_audio_byte_strs():
             yield Audio.new(byte_str=audio_byte_str, audio_format=self.AUDIO_FORMAT, audio_info=self.AUDIO_INFO)

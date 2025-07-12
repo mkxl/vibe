@@ -61,6 +61,8 @@ class Conversation:
         if len(self.turns) == 0:
             self._append_new_turn(chat_message=chat_message)
 
+            return
+
         last_turn = self.turns[-1]
 
         if last_turn.compatible_with(chat_message=chat_message):
